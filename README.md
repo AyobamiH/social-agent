@@ -8,6 +8,8 @@ Runs alongside `linkedin-agent` (port 4000) on the same server.
 
 Maintainer context for humans and coding agents lives in `AGENTS.md`.
 
+The tracked default profile is now **Threads-only** until Instagram and Facebook Meta setup is completed.
+
 ---
 
 ## Quick start
