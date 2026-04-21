@@ -61,10 +61,12 @@ function getPlatformAvailability(step, item) {
         case 'instagram':
             if (!config_1.default.ENABLE_INSTAGRAM)
                 return { enabled: false, reason: 'disabled via ENABLE_INSTAGRAM=false' };
-            if (!config_1.default.META_ACCESS_TOKEN)
-                return { enabled: false, reason: 'META_ACCESS_TOKEN not set' };
-            if (!config_1.default.INSTAGRAM_ACCOUNT_ID)
-                return { enabled: false, reason: 'INSTAGRAM_ACCOUNT_ID not set' };
+            if (!config_1.default.FACEBOOK_PAGE_ACCESS_TOKEN && !config_1.default.META_ACCESS_TOKEN) {
+                return { enabled: false, reason: 'FACEBOOK_PAGE_ACCESS_TOKEN or META_ACCESS_TOKEN not set' };
+            }
+            if (!config_1.default.INSTAGRAM_ACCOUNT_ID && !config_1.default.FACEBOOK_PAGE_ID) {
+                return { enabled: false, reason: 'INSTAGRAM_ACCOUNT_ID or FACEBOOK_PAGE_ID not set' };
+            }
             if (!item.instagram?.trim())
                 return { enabled: false, reason: 'Instagram caption is empty' };
             if (!item.imageUrl?.trim())

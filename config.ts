@@ -18,6 +18,7 @@ export interface AppConfig {
   ENABLE_FACEBOOK: boolean;
   THREADS_ACCESS_TOKEN: string;
   THREADS_USER_ID: string;
+  FACEBOOK_PAGE_ACCESS_TOKEN: string;
   INSTAGRAM_ACCOUNT_ID: string;
   FACEBOOK_GROUP_ID: string;
   FACEBOOK_USER_ID: string;
@@ -81,6 +82,7 @@ const config: AppConfig = {
     process.env.META_ACCESS_TOKEN    ||
     '',
   THREADS_USER_ID:      process.env.THREADS_USER_ID      || '',
+  FACEBOOK_PAGE_ACCESS_TOKEN: process.env.FACEBOOK_PAGE_ACCESS_TOKEN || '',
   INSTAGRAM_ACCOUNT_ID: process.env.INSTAGRAM_ACCOUNT_ID || '',
   FACEBOOK_GROUP_ID:    process.env.FACEBOOK_GROUP_ID    || '',
   FACEBOOK_USER_ID:     process.env.FACEBOOK_USER_ID     || '',

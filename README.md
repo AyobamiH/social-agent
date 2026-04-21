@@ -8,7 +8,7 @@ Runs alongside `linkedin-agent` (port 4000) on the same server.
 
 Maintainer context for humans and coding agents lives in `AGENTS.md`.
 
-The tracked default profile is now **Threads-only** until Instagram and Facebook Meta setup is completed.
+The tracked default profile is now **Threads + Instagram**, with Facebook still disabled until the group permission issue is resolved.
 
 ---
 
@@ -37,6 +37,8 @@ Select your app → generate token with these permissions:
 - `threads_content_publish`
 - `instagram_basic`
 - `instagram_content_publish`
+- `pages_read_engagement`
+- `pages_show_list`
 - `publish_to_groups`
 - `groups_access_member_info`
 
@@ -53,6 +55,10 @@ curl "https://graph.facebook.com/v25.0/me/accounts?access_token=YOUR_TOKEN"
 # Get Instagram account linked to a Page
 curl "https://graph.facebook.com/v25.0/PAGE_ID?fields=instagram_business_account&access_token=YOUR_TOKEN"
 ```
+
+If `FACEBOOK_PAGE_ID` is set, the app can auto-discover the linked Instagram business account and derive a Page access token for Instagram publishing.
+
+Instagram publishing has been live-tested successfully against the currently accessible Page-linked account.
 
 ### 4. Facebook Group ID
 Found in the group URL: `facebook.com/groups/GROUP_ID`

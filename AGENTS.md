@@ -43,23 +43,25 @@ This repo is authored in TypeScript, but runtime JS is emitted in place.
 As of April 21, 2026:
 
 - Threads posting is confirmed working.
+- Instagram posting is confirmed working against the currently accessible Page-linked account.
 - Threads now uses its own token path through `THREADS_ACCESS_TOKEN`.
 - Threads uses `/me`, `/me/threads`, and `/me/threads_publish` on `graph.threads.net`.
 - Facebook/Instagram Graph defaults were bumped to `v25.0`.
+- Instagram can now auto-discover the page-linked `instagram_business_account` and derive a Page access token from `FACEBOOK_PAGE_ID` + `META_ACCESS_TOKEN`.
 - Queue retry behavior is safe: failed platforms no longer delete queued items.
 - Partial success is supported: one platform can succeed without forcing the whole slot to fail.
 
 Current live operational mode in `.env`:
 
 - `ENABLE_THREADS=true`
-- `ENABLE_INSTAGRAM=false`
+- `ENABLE_INSTAGRAM=true`
 - `ENABLE_FACEBOOK=false`
 
 This was done because:
 
-- the Facebook Page does not currently expose a linked `instagram_business_account`
+- Threads and Instagram are both confirmed working
 - the Facebook Group still returns `(#3) Missing Permission`
-- Threads is the only platform confirmed ready for publishing
+- Facebook is the only platform still intentionally disabled
 
 ## Meta Config Notes
 
@@ -68,13 +70,15 @@ Do not mix these IDs up:
 - `FACEBOOK_USER_ID`: the Facebook user account ID returned by `/me`
 - `FACEBOOK_PAGE_ID`: the Facebook Page ID returned by `/me/accounts`
 - `INSTAGRAM_ACCOUNT_ID`: must be the Page-linked `instagram_business_account` ID, not a Facebook user ID
+- `FACEBOOK_PAGE_ACCESS_TOKEN`: optional override for Instagram publishing; otherwise the app derives it from the configured Page
 - `THREADS_USER_ID`: the Threads account ID returned by `graph.threads.net/me`
 - `FACEBOOK_GROUP_ID`: the Group object ID used for `/feed`
 
 Current known live values discovered during diagnostics:
 
 - `FACEBOOK_USER_ID=1483119573444544`
-- `FACEBOOK_PAGE_ID=102636009006228`
+- `FACEBOOK_PAGE_ID=123393450677299`
+- `INSTAGRAM_ACCOUNT_ID=17841453638630920`
 - `THREADS_USER_ID=25914281681582868`
 
 Do not commit real secrets from `.env`.
@@ -115,7 +119,7 @@ These files are runtime state, not source code.
 
 ## Known Risks
 
-- Instagram posting still depends on a valid, page-linked `instagram_business_account`.
+- Instagram posting depends on the currently accessible Page continuing to expose the linked `instagram_business_account`.
 - Facebook Group posting still depends on app/token/group permissions that are not fixed in code.
 - DALL-E image URLs are temporary. If an Instagram slot sits too long before posting, the image URL may expire.
 - Runtime JS can drift from TypeScript if `npm run build` is skipped.
@@ -143,4 +147,3 @@ For Meta diagnostics:
 For Threads-specific work:
 
 - `src/threads.ts`
-

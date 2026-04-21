@@ -19,6 +19,7 @@ interface IdentityResponse extends GraphErrorContainer {
 interface PageInfo {
   id: string;
   name: string;
+  access_token?: string;
 }
 
 interface PagesResponse extends GraphErrorContainer {
@@ -90,13 +91,19 @@ async function main(): Promise<void> {
   console.log(me.error ? `   ✕ ${me.error.message}` : `   ✓ ${me.name} (${me.id})`);
 
   console.log('\n2. Facebook Pages...');
-  const pages = await get<PagesResponse>('graph.facebook.com', `/${graphVersion}/me/accounts?access_token=${token}`);
+  const pages = await get<PagesResponse>(
+    'graph.facebook.com',
+    `/${graphVersion}/me/accounts?fields=id,name,access_token&access_token=${token}`
+  );
   if (pages.error) {
     console.log(`   ✕ ${pages.error.message}`);
   } else if (!pages.data?.length) {
     console.log('   ✕ No pages found');
   } else {
-    pages.data.forEach(page => console.log(`   ✓ Page: ${page.name} (${page.id})`));
+    pages.data.forEach(page => {
+      const tokenNote = page.access_token ? ' | page token available' : '';
+      console.log(`   ✓ Page: ${page.name} (${page.id})${tokenNote}`);
+    });
   }
 
   console.log('\n3. Page-linked Instagram accounts...');
@@ -150,7 +157,23 @@ async function main(): Promise<void> {
   console.log('\n5. Configured Instagram account...');
   const igId = config.INSTAGRAM_ACCOUNT_ID;
   if (!igId) {
-    console.log('   ✕ INSTAGRAM_ACCOUNT_ID not set in .env');
+    const configuredPage = pages.data?.find(page => page.id === config.FACEBOOK_PAGE_ID);
+    if (linkedIgAccounts.length && configuredPage) {
+      console.log(
+        `   ✓ INSTAGRAM_ACCOUNT_ID not set, but it can be auto-discovered from FACEBOOK_PAGE_ID ${configuredPage.id}`
+      );
+    } else if (linkedIgAccounts.length && config.FACEBOOK_PAGE_ID) {
+      const discoveredPages = linkedIgAccounts.map(account => account.pageId).join(', ');
+      console.log(
+        `   ✕ INSTAGRAM_ACCOUNT_ID not set, and FACEBOOK_PAGE_ID ${config.FACEBOOK_PAGE_ID} does not match the Page(s) currently linked to Instagram: ${discoveredPages}`
+      );
+    } else if (config.FACEBOOK_PAGE_ID) {
+      console.log(
+        '   ✕ INSTAGRAM_ACCOUNT_ID not set in .env and no page-linked instagram_business_account is available yet'
+      );
+    } else {
+      console.log('   ✕ INSTAGRAM_ACCOUNT_ID not set in .env');
+    }
   } else {
     const linkedMatch = linkedIgAccounts.find(account => account.id === igId);
     if (linkedMatch) {
@@ -185,6 +208,12 @@ async function main(): Promise<void> {
         console.log('     No linked instagram_business_account was discovered from your pages.');
       }
     }
+  }
+
+  if (config.FACEBOOK_PAGE_ACCESS_TOKEN) {
+    console.log('\n   Note: FACEBOOK_PAGE_ACCESS_TOKEN is set in .env');
+  } else if (pages.data?.some(page => page.id === config.FACEBOOK_PAGE_ID && page.access_token)) {
+    console.log('\n   Note: FACEBOOK_PAGE_ACCESS_TOKEN is not set, but it can be auto-derived from your configured Page');
   }
 
   console.log('\n6. Threads account...');
