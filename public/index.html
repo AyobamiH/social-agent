@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Social Agent</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--surface3:#2a2f47;
+  --border:#2e3248;--text:#e8eaf6;--muted:#7b82a8;--hint:#4a5170;
+  --blue:#1e88e5;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;
+  --purple:#8b5cf6;--teal:#14b8a6;--pink:#ec4899;
+  --threads:#000;--ig:#e1306c;--fb:#1877f2;
+  --r:10px;--rl:16px;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;min-height:100vh}
+.layout{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+.sidebar{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.main{padding:2rem;overflow-y:auto;max-height:100vh}
+.logo{padding:1.25rem;border-bottom:1px solid var(--border)}
+.logo-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.logo-icon{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--ig),var(--fb));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff}
+.logo-title{font-size:14px;font-weight:600}
+.logo-sub{font-size:11px;color:var(--muted)}
+.agent-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:3px 9px;border-radius:20px;background:#22c55e18;border:1px solid #22c55e33;color:var(--green);margin-top:6px}
+.pulse{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.nav{padding:.5rem 0;flex:1}
+.nav-item{display:flex;align-items:center;gap:9px;padding:8px 1.25rem;font-size:13px;color:var(--muted);cursor:pointer;border-left:2px solid transparent;transition:all .15s}
+.nav-item:hover{color:var(--text);background:var(--surface2)}
+.nav-item.active{color:var(--text);background:var(--surface2);border-left-color:var(--blue);font-weight:500}
+.sidebar-footer{padding:1rem 1.25rem;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}
+.reddit-row{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.rdot{width:7px;height:7px;border-radius:50%;background:#ff4500}
+.page{display:none}.page.active{display:block;animation:fi .2s ease}
+@keyframes fi{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.page-title{font-size:20px;font-weight:600;margin-bottom:2px}
+.page-sub{font-size:13px;color:var(--muted);margin-bottom:1.5rem}
+.stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:1.5rem}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem}
+.stat-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
+.stat-value{font-size:26px;font-weight:600}
+.c-blue{color:var(--blue)}.c-green{color:var(--green)}.c-amber{color:var(--amber)}.c-teal{color:var(--teal)}
+.action-bar{display:flex;gap:10px;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center}
+.ml{margin-left:auto}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid transparent;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:#0a66c2;color:#fff}.btn-primary:hover:not(:disabled){background:var(--blue)}
+.btn-success{background:#22c55e18;color:var(--green);border-color:#22c55e33}.btn-success:hover:not(:disabled){background:#22c55e28}
+.btn-ghost{background:var(--surface2);color:var(--text);border-color:var(--border)}.btn-ghost:hover:not(:disabled){border-color:var(--muted)}
+.btn-danger{background:#ef444418;color:var(--red);border-color:#ef444433}
+.btn-sm{padding:5px 11px;font-size:12px}
+.slots-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:1.5rem}
+.slot-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:1.25rem}
+.slot-card.filled{border-color:#22c55e33}
+.slot-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.slot-time-row{display:flex;align-items:center;gap:9px}
+.sdot{width:9px;height:9px;border-radius:50%;background:var(--border)}
+.sdot.on{background:var(--green);box-shadow:0 0 7px #22c55e66}
+.slot-time{font-size:14px;font-weight:600}
+.slot-desc{font-size:11px;color:var(--muted)}
+.platform-tabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.ptab{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid transparent;transition:all .15s}
+.ptab.threads{background:#ffffff12;color:#fff;border-color:#ffffff22}
+.ptab.threads.active{background:#fff;color:#000}
+.ptab.instagram{background:#e1306c18;color:var(--ig);border-color:#e1306c33}
+.ptab.instagram.active{background:var(--ig);color:#fff}
+.ptab.facebook{background:#1877f218;color:var(--fb);border-color:#1877f233}
+.ptab.facebook.active{background:var(--fb);color:#fff}
+.platform-content{font-size:12px;line-height:1.7;color:var(--muted);max-height:80px;overflow:hidden;position:relative;margin-bottom:10px}
+.platform-content.filled{color:var(--text)}
+.platform-content::after{content:'';position:absolute;bottom:0;left:0;right:0;height:20px;background:linear-gradient(transparent,var(--surface))}
+.ig-image{width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:8px;border:1px solid var(--border)}
+.slot-actions{display:flex;gap:6px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap}
+.history-item{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:8px}
+.history-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.platform-pills{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.ppill{font-size:11px;padding:2px 8px;border-radius:5px;font-weight:500}
+.ppill-ok{background:#22c55e18;color:var(--green)}
+.ppill-err{background:#ef444418;color:var(--red)}
+.log-wrap{background:#090b10;border:1px solid var(--border);border-radius:var(--r);padding:1rem;font-family:monospace;font-size:12px;line-height:1.8;max-height:520px;overflow-y:auto}
+.log-line{display:flex;gap:10px}
+.log-ts{color:var(--hint);font-size:11px;flex-shrink:0}
+.log-INFO{color:#63b3ed}.log-WARN{color:var(--amber)}.log-ERROR{color:var(--red)}
+.log-msg{color:#c8cfe8;word-break:break-word}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:6px}
+.pill-blue{background:#1e88e518;color:var(--blue)}
+.pill-green{background:#22c55e18;color:var(--green)}
+.pill-amber{background:#f59e0b18;color:var(--amber)}
+.settings-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);margin-bottom:12px;overflow:hidden}
+.settings-head{padding:1rem 1.25rem;border-bottom:1px solid var(--border);font-size:13px;font-weight:600}
+.settings-row{display:flex;align-items:center;justify-content:space-between;padding:10px 1.25rem;border-bottom:1px solid var(--border)}
+.settings-row:last-child{border-bottom:none}
+.settings-key{font-size:12px;color:var(--muted);font-family:monospace}
+.settings-val{font-size:12px;color:var(--text);font-weight:500}
+.toast-wrap{position:fixed;bottom:1.5rem;right:1.5rem;display:flex;flex-direction:column;gap:8px;z-index:200}
+.toast{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 16px;font-size:13px;display:flex;align-items:center;gap:8px;animation:su .2s ease;min-width:200px}
+.toast.ok{border-color:#22c55e44}.toast.err{border-color:#ef444444}
+@keyframes su{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:sp .6s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:3rem;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-row">
+      <div class="logo-icon">S</div>
+      <div><div class="logo-title">Social Agent</div><div class="logo-sub">Multi-platform autoposter</div></div>
+    </div>
+    <div class="agent-pill"><span class="pulse"></span> Live</div>
+  </div>
+  <nav class="nav">
+    <div class="nav-item active" onclick="go('dashboard',this)">◈ Dashboard</div>
+    <div class="nav-item" onclick="go('queue',this)">◷ Queue</div>
+    <div class="nav-item" onclick="go('history',this)">✓ History</div>
+    <div class="nav-item" onclick="go('logs',this)">≡ Logs</div>
+    <div class="nav-item" onclick="go('settings',this)">⚙ Settings</div>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="reddit-row"><div class="rdot"></div><span id="sidebar-source">Loading...</span></div>
+    <div style="font-size:11px;color:var(--hint)">Dashboard port 4001</div>
+  </div>
+</aside>
+
+<main class="main">
+
+  <!-- Dashboard -->
+  <div class="page active" id="page-dashboard">
+    <div class="page-title">Social Agent Dashboard</div>
+    <div class="page-sub">Threads · Instagram · Facebook Group — all from one Reddit source</div>
+    <div class="stats-grid">
+      <div class="stat"><div class="stat-label">Slots filled</div><div class="stat-value c-blue" id="s-queued">—</div></div>
+      <div class="stat"><div class="stat-label">Total batches posted</div><div class="stat-value c-green" id="s-posted">—</div></div>
+      <div class="stat"><div class="stat-label">Reddit posts used</div><div class="stat-value c-amber" id="s-used">—</div></div>
+    </div>
+    <div class="action-bar">
+      <button class="btn btn-primary" onclick="fetchNow()" id="btn-fetch">↓ Fetch &amp; transform all</button>
+      <button class="btn btn-success" onclick="postAll()" id="btn-post-all">↑ Post all now</button>
+      <button class="btn btn-ghost ml" onclick="loadDashboard()">↻ Refresh</button>
+    </div>
+    <div class="slots-grid" id="slots-grid"></div>
+  </div>
+
+  <!-- Queue -->
+  <div class="page" id="page-queue">
+    <div class="page-title">Post queue</div>
+    <div class="page-sub">Content ready for each platform per slot</div>
+    <div id="queue-content"></div>
+  </div>
+
+  <!-- History -->
+  <div class="page" id="page-history">
+    <div class="page-title">Post history</div>
+    <div class="page-sub">All batches posted across platforms</div>
+    <div id="history-content"></div>
+  </div>
+
+  <!-- Logs -->
+  <div class="page" id="page-logs">
+    <div class="page-title">Live logs</div>
+    <div class="page-sub">Real-time agent activity</div>
+    <div class="action-bar">
+      <button class="btn btn-ghost" onclick="loadLogs()">↻ Refresh</button>
+      <button class="btn btn-ghost" id="btn-auto" onclick="toggleAuto()">⏱ Auto off</button>
+    </div>
+    <div class="log-wrap" id="log-wrap">Loading...</div>
+  </div>
+
+  <!-- Settings -->
+  <div class="page" id="page-settings">
+    <div class="page-title">Settings</div>
+    <div class="page-sub">Current config — edit <code>.env</code> then <code>npm run deploy</code></div>
+    <div id="settings-content"></div>
+  </div>
+
+</main>
+</div>
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+const SLOTS=[{id:'s1',label:'5:00 AM',desc:'Early risers'},{id:'s2',label:'7:00 AM',desc:'Morning commute'},{id:'s3',label:'12:00 PM',desc:'Lunch break'},{id:'s4',label:'3:00 PM',desc:'Afternoon peak'}];
+let autoTimer=null;
+let activePlatform={};
+
+function go(page,el){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  el.classList.add('active');
+  ({dashboard:loadDashboard,queue:loadQueue,history:loadHistory,logs:loadLogs,settings:loadSettings})[page]?.();
+}
+
+async function api(path,opts={}){
+  const r=await fetch(path,{headers:{'Content-Type':'application/json'},...opts});
+  return r.json();
+}
+
+async function loadDashboard(){
+  const d=await api('/api/status');
+  document.getElementById('s-queued').textContent=d.stats.queued+' / 4';
+  document.getElementById('s-posted').textContent=d.stats.posted;
+  document.getElementById('s-used').textContent=d.stats.usedPosts;
+  document.getElementById('sidebar-source').textContent='u/'+d.config.redditUser;
+  renderSlots(d.slots);
+}
+
+function renderSlots(slots){
+  document.getElementById('slots-grid').innerHTML=slots.map(s=>{
+    const f=!!s.post;
+    const ap=activePlatform[s.id]||'threads';
+    let content='No post scheduled yet';
+    let imgHtml='';
+    if(f){
+      if(ap==='threads') content=esc(s.post.threads||'');
+      if(ap==='instagram'){
+        content=esc(s.post.instagram||'');
+        if(s.post.imageUrl) imgHtml=`<img class="ig-image" src="${s.post.imageUrl}" alt="DALL-E image">`;
+      }
+      if(ap==='facebook') content=esc(s.post.facebook||'');
+    }
+    return`<div class="slot-card ${f?'filled':''}">
+      <div class="slot-head">
+        <div class="slot-time-row">
+          <div class="sdot ${f?'on':''}"></div>
+          <div><div class="slot-time">${s.label}</div><div class="slot-desc">${s.desc||''}</div></div>
+        </div>
+        ${f?`<span class="pill pill-green">● Ready</span>`:`<span class="pill pill-amber">Empty</span>`}
+      </div>
+      ${f?`<div class="platform-tabs">
+        <span class="ptab threads ${ap==='threads'?'active':''}" onclick="setPlatform('${s.id}','threads')">T Threads</span>
+        <span class="ptab instagram ${ap==='instagram'?'active':''}" onclick="setPlatform('${s.id}','instagram')">◎ Instagram</span>
+        <span class="ptab facebook ${ap==='facebook'?'active':''}" onclick="setPlatform('${s.id}','facebook')">f Facebook</span>
+      </div>`:''}
+      ${imgHtml}
+      <div class="platform-content ${f?'filled':''}">${f?content:'No post scheduled yet'}</div>
+      ${f?`<div class="slot-actions">
+        <button class="btn btn-success btn-sm" onclick="postSlot('${s.id}')">↑ Post all platforms</button>
+        <button class="btn btn-danger btn-sm" onclick="delSlot('${s.id}')">✕ Clear</button>
+      </div>`:''}
+    </div>`;
+  }).join('');
+}
+
+function setPlatform(slotId,platform){
+  activePlatform[slotId]=platform;
+  loadDashboard();
+}
+
+async function fetchNow(){
+  const btn=document.getElementById('btn-fetch');
+  btn.disabled=true;btn.innerHTML='<span class="spin"></span> Fetching + generating images...';
+  try{
+    const r=await api('/api/fetch',{method:'POST'});
+    if(r.error) throw new Error(r.error);
+    toast(`Fetched ${r.fetched} posts · ${r.filled} slots filled`,'ok');
+    await loadDashboard();
+  }catch(e){toast(e.message,'err');}
+  btn.disabled=false;btn.innerHTML='↓ Fetch &amp; transform all';
+}
+
+async function postAll(){
+  if(!confirm('Post all filled slots to Threads, Instagram and Facebook now?')) return;
+  const btn=document.getElementById('btn-post-all');
+  btn.disabled=true;btn.innerHTML='<span class="spin"></span> Posting...';
+  try{
+    const r=await api('/api/post-all',{method:'POST'});
+    const ok=r.results.filter(x=>!x.skipped).length;
+    toast(`Posted ${ok} batches across all platforms`,'ok');
+    await loadDashboard();
+  }catch(e){toast(e.message,'err');}
+  btn.disabled=false;btn.innerHTML='↑ Post all now';
+}
+
+async function postSlot(id){
+  const sl=SLOTS.find(s=>s.id===id);
+  if(!confirm(`Post ${sl.label} to all 3 platforms now?`)) return;
+  try{
+    const r=await api('/api/post-slot',{method:'POST',body:JSON.stringify({slotId:id})});
+    if(r.errors?.length) toast(`Posted with errors: ${r.errors.join(', ')}`, 'err');
+    else toast('Posted to all platforms!','ok');
+    await loadDashboard();
+  }catch(e){toast(e.message,'err');}
+}
+
+async function delSlot(id){
+  if(!confirm('Clear this slot?')) return;
+  await api('/api/slot',{method:'DELETE',body:JSON.stringify({slotId:id})});
+  toast('Cleared','ok');
+  await loadDashboard();
+}
+
+async function loadQueue(){
+  const data=await api('/api/queue');
+  const el=document.getElementById('queue-content');
+  const filled=data.filter(d=>d.post);
+  if(!filled.length){el.innerHTML='<div class="empty">Queue empty — hit Fetch on the dashboard.</div>';return;}
+  el.innerHTML=filled.map(d=>`
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:1.25rem;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <span class="pill pill-blue">${d.slot.label}</span>
+        <span style="font-size:12px;color:var(--muted)">${esc(d.post.title||'')}</span>
+      </div>
+      ${d.post.imageUrl?`<img src="${d.post.imageUrl}" style="width:100%;max-height:160px;object-fit:cover;border-radius:8px;margin-bottom:12px;border:1px solid var(--border)">`:''}
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div>
+          <div style="font-size:11px;font-weight:600;color:#fff;margin-bottom:5px">T Threads</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.6">${esc((d.post.threads||'').substring(0,120))}…</div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--ig);margin-bottom:5px">◎ Instagram</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.6">${esc((d.post.instagram||'').substring(0,120))}…</div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--fb);margin-bottom:5px">f Facebook</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.6">${esc((d.post.facebook||'').substring(0,120))}…</div>
+        </div>
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:8px">
+        <button class="btn btn-success btn-sm" onclick="postSlot('${d.slot.id}')">↑ Post all platforms</button>
+        <button class="btn btn-danger btn-sm" onclick="delSlot('${d.slot.id}')">✕ Clear</button>
+      </div>
+    </div>`).join('');
+}
+
+async function loadHistory(){
+  const data=await api('/api/history');
+  const el=document.getElementById('history-content');
+  if(!data.length){el.innerHTML='<div class="empty">No posts yet.</div>';return;}
+  el.innerHTML=data.map(h=>`
+    <div class="history-item">
+      <div class="history-head">
+        <span class="pill pill-blue">${h.slot}</span>
+        <span style="font-size:11px;color:var(--muted)">${new Date(h.postedAt).toLocaleString()}</span>
+        <span style="font-size:11px;color:var(--muted);flex:1">${esc(h.title||'')}</span>
+      </div>
+      <div class="platform-pills">
+        <span class="ppill ${h.ids?.threads?'ppill-ok':'ppill-err'}">T ${h.ids?.threads?'posted':'failed'}</span>
+        <span class="ppill ${h.ids?.instagram?'ppill-ok':'ppill-err'}">◎ ${h.ids?.instagram?'posted':'failed'}</span>
+        <span class="ppill ${h.ids?.facebook?'ppill-ok':'ppill-err'}">f ${h.ids?.facebook?'posted':'failed'}</span>
+      </div>
+      ${h.errors?.length?`<div style="font-size:11px;color:var(--red);margin-top:6px">${h.errors.join(' · ')}</div>`:''}
+    </div>`).join('');
+}
+
+async function loadLogs(){
+  const lines=await api('/api/logs');
+  const el=document.getElementById('log-wrap');
+  if(!lines.length){el.textContent='No logs yet.';return;}
+  el.innerHTML=lines.map(line=>{
+    const m=line.match(/\[(.+?)\] \[(.+?)\] (.+)/);
+    if(!m) return`<div class="log-line"><span class="log-msg">${esc(line)}</span></div>`;
+    const lv=m[2].trim();
+    return`<div class="log-line"><span class="log-ts">${m[1]}</span><span class="log-${lv}">[${lv}]</span><span class="log-msg">${esc(m[3])}</span></div>`;
+  }).join('');
+}
+
+function toggleAuto(){
+  const btn=document.getElementById('btn-auto');
+  if(autoTimer){clearInterval(autoTimer);autoTimer=null;btn.innerHTML='⏱ Auto off';}
+  else{autoTimer=setInterval(loadLogs,3000);btn.innerHTML='⏱ Auto on';}
+}
+
+async function loadSettings(){
+  const d=await api('/api/status');
+  const c=d.config;
+  document.getElementById('settings-content').innerHTML=`
+    <div class="settings-section">
+      <div class="settings-head">Reddit source</div>
+      ${sr('REDDIT_USER','u/'+c.redditUser)}
+      ${sr('REDDIT_ALLOWED_SUBS',c.allowedSubs.map(s=>'r/'+s).join(', '))}
+    </div>
+    <div class="settings-section">
+      <div class="settings-head">Platforms</div>
+      ${sr('Threads','THREADS_USER_ID in .env')}
+      ${sr('Instagram','INSTAGRAM_ACCOUNT_ID in .env')}
+      ${sr('Facebook Group','FACEBOOK_GROUP_ID in .env')}
+      ${sr('Meta Token','META_ACCESS_TOKEN in .env')}
+    </div>
+    <div class="settings-section">
+      <div class="settings-head">AI</div>
+      ${sr('OPENAI_MODEL',c.model)}
+      ${sr('Image model','DALL-E 3')}
+    </div>
+    <div class="settings-section">
+      <div class="settings-head">Schedule (${c.timezone})</div>
+      ${SLOTS.map(s=>sr(s.label,s.desc+' · Daily')).join('')}
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin-top:1rem">Edit <code>.env</code> then run <code>npm run deploy</code> to apply changes.</p>`;
+}
+function sr(k,v){return`<div class="settings-row"><span class="settings-key">${k}</span><span class="settings-val">${v}</span></div>`;}
+
+function toast(msg,type='ok'){
+  const el=document.createElement('div');
+  el.className=`toast ${type}`;
+  el.innerHTML=`<span>${type==='ok'?'✓':'✕'}</span> ${msg}`;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(()=>el.remove(),3500);
+}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+loadDashboard();
+</script>
+</body>
+</html>
