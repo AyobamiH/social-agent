@@ -39,22 +39,36 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.publish = publish;
 const https = __importStar(require("node:https"));
 const config_1 = __importDefault(require("../config"));
-function publish(message) {
-    const groupId = config_1.default.FACEBOOK_GROUP_ID;
-    const token = config_1.default.META_ACCESS_TOKEN;
-    const version = config_1.default.META_GRAPH_VERSION;
-    if (!groupId || !token) {
-        throw new Error('FACEBOOK_GROUP_ID or META_ACCESS_TOKEN not set');
+function publish(text) {
+    if (!config_1.default.LINKEDIN_TOKEN || !config_1.default.LINKEDIN_PERSON_URN) {
+        throw new Error('LINKEDIN_TOKEN or LINKEDIN_PERSON_URN not set');
     }
-    const body = JSON.stringify({ message, access_token: token });
+    if (!text || !text.trim()) {
+        throw new Error('LinkedIn post text is empty');
+    }
+    const payload = JSON.stringify({
+        author: config_1.default.LINKEDIN_PERSON_URN,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+            'com.linkedin.ugc.ShareContent': {
+                shareCommentary: { text },
+                shareMediaCategory: 'NONE',
+            },
+        },
+        visibility: {
+            'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC',
+        },
+    });
     return new Promise((resolve, reject) => {
         const req = https.request({
-            hostname: 'graph.facebook.com',
-            path: `/${version}/${groupId}/feed`,
+            hostname: 'api.linkedin.com',
+            path: '/v2/ugcPosts',
             method: 'POST',
             headers: {
+                'Authorization': `Bearer ${config_1.default.LINKEDIN_TOKEN}`,
                 'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
+                'X-Restli-Protocol-Version': '2.0.0',
+                'Content-Length': Buffer.byteLength(payload),
             },
         }, res => {
             let data = '';
@@ -62,21 +76,27 @@ function publish(message) {
                 data += chunk;
             });
             res.on('end', () => {
+                if (res.statusCode === 201) {
+                    try {
+                        const json = JSON.parse(data);
+                        resolve(json.id || 'posted');
+                    }
+                    catch {
+                        resolve('posted');
+                    }
+                    return;
+                }
                 try {
                     const json = JSON.parse(data);
-                    if (json.error) {
-                        reject(new Error('Facebook API: ' + (json.error.message || 'Unknown error')));
-                        return;
-                    }
-                    resolve(json.id);
+                    reject(new Error('LinkedIn API: ' + (json.message || `HTTP ${res.statusCode}`)));
                 }
-                catch (error) {
-                    reject(new Error('Facebook parse error: ' + String(error)));
+                catch {
+                    reject(new Error(`LinkedIn API: HTTP ${res.statusCode} ${data}`.trim()));
                 }
             });
         });
         req.on('error', reject);
-        req.write(body);
+        req.write(payload);
         req.end();
     });
 }

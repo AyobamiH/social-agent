@@ -1,5 +1,7 @@
 export type SlotId = 's1' | 's2' | 's3' | 's4';
-export type PlatformKey = 'threads' | 'instagram' | 'facebook';
+export type PlatformKey = 'threads' | 'instagram' | 'linkedin' | 'facebook';
+export type SourceStatus = 'banked' | 'exhausted';
+export type AngleStatus = 'ready' | 'queued' | 'published' | 'discarded';
 
 export interface RedditPost {
   id: string;
@@ -13,28 +15,92 @@ export interface RedditPost {
   created: number;
 }
 
+export interface SourceSummary {
+  source_type: string;
+  topic: string;
+  core_claim: string;
+  surface_problem: string;
+  deeper_problem: string;
+  practical_consequence: string;
+  specific_example: string;
+  best_line: string;
+  audience_fit: string;
+  tone_source: string;
+  cta_goal: string;
+}
+
+export interface AngleCandidate {
+  label: string;
+  thesis: string;
+  hook: string;
+  supportingPoints: string[];
+  practicalConsequence: string;
+  specificExample: string;
+  audienceFit: string;
+  strength: number;
+}
+
+export interface SourceExtraction {
+  summary: SourceSummary;
+  angles: AngleCandidate[];
+}
+
+export interface DraftQualityScores {
+  specificity: number;
+  human_tone: number;
+  platform_fit: number;
+  clarity: number;
+  practical_consequence: number;
+  non_genericity: number;
+}
+
+export interface PlatformDraftMeta {
+  angle: string;
+  scores: DraftQualityScores;
+  bannedPhrasesFound: string[];
+  learningNotes?: string[];
+}
+
+export type DraftMetaMap = Partial<Record<PlatformKey, PlatformDraftMeta>>;
+
 export interface TransformedContent {
   threads: string;
   instagram: string;
+  linkedin: string;
   facebook: string;
   imageUrl: string;
+}
+
+export interface DraftBundle extends TransformedContent {
+  draftMeta: DraftMetaMap;
+  draftedPlatforms: PlatformKey[];
+  imagePrompt?: string;
 }
 
 export interface PlatformIds {
   threads?: string;
   instagram?: string;
+  linkedin?: string;
   facebook?: string;
 }
 
 export interface PublishErrors {
   threads?: string;
   instagram?: string;
+  linkedin?: string;
   facebook?: string;
 }
 
 export interface QueueItem extends TransformedContent {
   redditId: string;
   title: string;
+  sourceHash?: string;
+  angleId?: string;
+  angleLabel?: string;
+  angleThesis?: string;
+  draftMeta?: DraftMetaMap;
+  draftedPlatforms?: PlatformKey[];
+  imagePrompt?: string;
   ids?: PlatformIds;
   publishErrors?: PublishErrors;
   lastPublishAttemptAt?: string;
@@ -44,9 +110,59 @@ export interface HistoryEntry extends TransformedContent {
   slot: string;
   title: string;
   postedAt: string;
+  redditId?: string;
+  sourceHash?: string;
+  angleId?: string;
+  angleLabel?: string;
+  angleThesis?: string;
+  draftMeta?: DraftMetaMap;
+  draftedPlatforms?: PlatformKey[];
+  imagePrompt?: string;
   ids?: PlatformIds;
   errors?: string[];
   engagement?: Record<string, unknown> & { polledAt?: string };
+}
+
+export interface SourceRecord {
+  redditId: string;
+  title: string;
+  selftext: string;
+  url: string;
+  subreddit: string;
+  author: string;
+  created: number;
+  contentHash: string;
+  status: SourceStatus;
+  summary?: SourceSummary;
+  angleIds: string[];
+  lastSeenAt: string;
+  extractedAt?: string;
+  exhaustedAt?: string;
+  lastQueuedAt?: string;
+  lastPublishedAt?: string;
+}
+
+export interface AngleRecord {
+  id: string;
+  redditId: string;
+  sourceHash: string;
+  sourceCreated: number;
+  sourceTitle: string;
+  label: string;
+  thesis: string;
+  hook: string;
+  supportingPoints: string[];
+  practicalConsequence: string;
+  specificExample: string;
+  audienceFit: string;
+  strength: number;
+  status: AngleStatus;
+  createdAt: string;
+  queuedAt?: string;
+  publishedAt?: string;
+  discardedAt?: string;
+  lastQueuedSlot?: SlotId;
+  lastError?: string;
 }
 
 export interface QueueState {
@@ -77,4 +193,30 @@ export interface PublishResult {
   activePlatforms: PlatformKey[];
   skippedPlatforms: PlatformKey[];
   completed: boolean;
+}
+
+export interface MemoryStats {
+  sources: {
+    total: number;
+    banked: number;
+    exhausted: number;
+  };
+  angles: {
+    total: number;
+    ready: number;
+    queued: number;
+    published: number;
+    discarded: number;
+  };
+  legacyUsedIds: number;
+}
+
+export interface FillQueueStats {
+  fetched: number;
+  filled: number;
+  reusedAngles: number;
+  extractedSources: number;
+  exhaustedSources: number;
+  skippedExhausted: number;
+  skippedReserved: number;
 }

@@ -1,7 +1,7 @@
 {
   "name": "social-agent",
   "version": "1.0.0",
-  "description": "Reddit → OpenAI → Threads + Instagram + Facebook autoposter with DALL-E images and web dashboard.",
+  "description": "Reddit → OpenAI → LinkedIn + Threads + Instagram + Facebook autoposter with DALL-E images and web dashboard.",
   "main": "src/agent.js",
   "scripts": {
     "build": "tsc --project tsconfig.json",
@@ -12,6 +12,7 @@
     "fetch": "npm run build && node src/cli.js fetch",
     "queue": "npm run build && node src/cli.js queue",
     "status": "npm run build && node src/cli.js status",
+    "memory": "npm run build && node src/cli.js memory",
     "history": "npm run build && node src/cli.js history",
     "post-now": "npm run build && node src/cli.js post-now",
     "test-meta": "npm run build && node src/test-meta.js"
@@ -20,7 +21,7 @@
     "node-cron": "^3.0.3"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=24.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

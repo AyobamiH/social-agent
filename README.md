@@ -1,14 +1,18 @@
 # Social Agent
 
-Fetches posts by `u/advanced_pudding9228` from `r/openclawbot` and `r/lovablebuildershub`, transforms them into platform-native content with OpenAI GPT-4o, generates images with DALL-E 3, and posts to **Threads + Instagram + Facebook Group** at **5AM · 7AM · 12PM · 3PM** daily.
+Fetches posts by `u/advanced_pudding9228` from `r/openclawbot` and `r/lovablebuildershub`, transforms them into platform-native content with OpenAI GPT-4o, generates images with DALL-E 3, and posts to **LinkedIn + Threads + Instagram + Facebook Group** at **5AM · 7AM · 12PM · 3PM** daily.
 
 Dashboard at **http://localhost:4001**.
 
-Runs alongside `linkedin-agent` (port 4000) on the same server.
+The LinkedIn publishing slice has now been merged into this repo so `social-agent` can become the single runtime for every platform.
 
 Maintainer context for humans and coding agents lives in `AGENTS.md`.
 
-The tracked default profile is now **Threads + Instagram**, with Facebook still disabled until the group permission issue is resolved.
+The tracked default profile is still **Threads + Instagram**, with Facebook still disabled until the group permission issue is resolved and LinkedIn left off until its merged slice is verified live in this repo.
+
+The platform drafting rules now live in `content-os/` so the generator uses a source-extraction step instead of naive line-by-line rewriting.
+
+The content system now keeps a source registry plus an angle bank so one Reddit post can feed multiple future posts without re-extracting the same source every time.
 
 ---
 
@@ -21,7 +25,7 @@ npm install
 cp .env.example .env
 nano .env          # fill in your credentials
 npm run fetch      # test the pipeline
-npm run queue      # preview all 3 platform versions
+npm run queue      # preview all platform versions
 npm run start:pm2
 pm2 save && pm2 startup
 ```
@@ -60,6 +64,17 @@ If `FACEBOOK_PAGE_ID` is set, the app can auto-discover the linked Instagram bus
 
 Instagram publishing has been live-tested successfully against the currently accessible Page-linked account.
 
+### 3b. LinkedIn credentials
+Generate a LinkedIn user token with `w_member_social`, then set:
+
+```env
+ENABLE_LINKEDIN=true
+LINKEDIN_TOKEN=...
+LINKEDIN_PERSON_URN=urn:li:person:...
+```
+
+The merged LinkedIn publisher uses the UGC Posts API (`/v2/ugcPosts`) and publishes text-only posts as the authenticated member.
+
 ### 4. Facebook Group ID
 Found in the group URL: `facebook.com/groups/GROUP_ID`
 
@@ -69,9 +84,10 @@ Found in the group URL: `facebook.com/groups/GROUP_ID`
 
 | Platform | Length | Tone | Hashtags | Image |
 |---|---|---|---|---|
-| Threads | 500 chars max | Punchy, direct | 2-3 | None |
-| Instagram | 150 words | Storytelling | 10-15 | DALL-E 3 generated |
-| Facebook | 300 words | Conversational | 3-5 | None |
+| LinkedIn | 120-220 words | Concrete, professional, work-real | Optional and minimal | None |
+| Threads | 500 chars max | Punchy, direct | Optional and minimal | None |
+| Instagram | Caption-first, save-worthy | Clear, visual, emotionally legible | Minimal | DALL-E 3 generated |
+| Facebook | 300 words | Conversational | Optional | None |
 
 ---
 
@@ -79,9 +95,10 @@ Found in the group URL: `facebook.com/groups/GROUP_ID`
 
 | Command | What it does |
 |---|---|
-| `npm run fetch` | Fetch Reddit + transform for all 3 platforms |
+| `npm run fetch` | Fetch Reddit + transform for all enabled platforms |
 | `npm run queue` | Preview all platform versions per slot |
 | `npm run status` | Show slot fill status |
+| `npm run memory` | Show source/angle memory counts |
 | `npm run post-now` | Post all slots immediately |
 | `npm run deploy` | Pull from GitHub + restart |
 
@@ -89,6 +106,7 @@ Found in the group URL: `facebook.com/groups/GROUP_ID`
 
 ## Cost per fetch cycle
 
-- 4 posts × 3 GPT-4o calls = ~12 API calls (~$0.05)
-- 4 DALL-E 3 images = ~$0.16
-- **Total per day: ~$0.21**
+- New sources use one extraction pass to bank multiple reusable angles.
+- Queued posts only draft enabled platforms, and banked angles can be reused later without re-extracting the source.
+- Instagram image generation only runs when Instagram is enabled.
+- Exact OpenAI cost depends on how many platforms are enabled and which model you choose in `.env`.

@@ -9,11 +9,12 @@ This file is the fast-start context for LLMs and human maintainers working in th
 Current content flow:
 1. Fetch posts from allowed subreddits.
 2. Filter to posts by `REDDIT_USER`.
-3. Rewrite into Threads, Instagram, and Facebook variants with OpenAI.
-4. Generate one DALL-E image URL for the Instagram variant.
-5. Save each transformed item into a slot in `data/queue.json`.
-6. Publish only to enabled platforms.
-7. Save publish IDs and history in `data/history.json`.
+3. Bank each Reddit source into multiple reusable angles.
+4. Draft only one saved angle at a time into enabled platforms.
+5. Generate an Instagram image only when Instagram is enabled.
+6. Save each transformed item into a slot in `data/queue.json`.
+7. Publish only to enabled platforms.
+8. Save publish IDs and history in `data/history.json`.
 
 ## Runtime Layout
 
@@ -21,14 +22,17 @@ Current content flow:
 - `src/agent.ts`: cron scheduler and startup checks.
 - `src/cli.ts`: local operations like `fetch`, `queue`, `status`, and `post-now`.
 - `src/server.ts`: dashboard/API server on `GUI_PORT`.
+- `src/content-engine.ts`: shared source-bank / angle-bank / queue orchestration.
 - `src/publish.ts`: shared publish orchestrator. This is the main place to change multi-platform posting behavior.
+- `src/linkedin.ts`: LinkedIn publisher using the UGC Posts API.
 - `src/threads.ts`: Threads publisher using `graph.threads.net` `/me/...` endpoints.
 - `src/instagram.ts`: Instagram publisher using Graph API media container + publish flow.
 - `src/facebook.ts`: Facebook Group publisher using Graph API feed posts.
 - `src/test-meta.ts`: Meta diagnostics for identity, Page, Instagram linkage, Group access, and Threads account checks.
 - `src/store.ts`: queue/history persistence in the `data/` directory.
-- `src/ai.ts`: OpenAI text transforms plus DALL-E image generation.
+- `src/ai.ts`: source extraction, angle drafting, lightweight learning memory, and DALL-E image generation.
 - `src/reddit.ts`: Reddit fetcher for allowed subreddits.
+- `content-os/`: repo-ready prompt pack that defines source extraction, platform rules, quality checks, and banned phrasing.
 
 ## Important Build Rule
 
@@ -44,22 +48,27 @@ As of April 21, 2026:
 
 - Threads posting is confirmed working.
 - Instagram posting is confirmed working against the currently accessible Page-linked account.
+- LinkedIn code has been merged from `linkedin-agent-v4`, but this repo has not yet live-posted to LinkedIn.
 - Threads now uses its own token path through `THREADS_ACCESS_TOKEN`.
 - Threads uses `/me`, `/me/threads`, and `/me/threads_publish` on `graph.threads.net`.
 - Facebook/Instagram Graph defaults were bumped to `v25.0`.
 - Instagram can now auto-discover the page-linked `instagram_business_account` and derive a Page access token from `FACEBOOK_PAGE_ID` + `META_ACCESS_TOKEN`.
 - Queue retry behavior is safe: failed platforms no longer delete queued items.
 - Partial success is supported: one platform can succeed without forcing the whole slot to fail.
+- Source reuse is now supported: a Reddit post is only exhausted when no banked angles remain.
+- Draft generation now skips disabled platforms to save tokens.
 
 Current live operational mode in `.env`:
 
 - `ENABLE_THREADS=true`
 - `ENABLE_INSTAGRAM=true`
+- `ENABLE_LINKEDIN=false`
 - `ENABLE_FACEBOOK=false`
 
 This was done because:
 
 - Threads and Instagram are both confirmed working
+- LinkedIn has been merged but not yet verified from this repo
 - the Facebook Group still returns `(#3) Missing Permission`
 - Facebook is the only platform still intentionally disabled
 
@@ -89,6 +98,7 @@ These env vars control which platforms are active:
 
 - `ENABLE_THREADS`
 - `ENABLE_INSTAGRAM`
+- `ENABLE_LINKEDIN`
 - `ENABLE_FACEBOOK`
 
 Behavior:
@@ -105,14 +115,34 @@ Behavior:
 - `npm run fetch`: fill empty queue slots from Reddit
 - `npm run queue`: inspect queued content and publish IDs/errors
 - `npm run status`: show which slots are filled
+- `npm run memory`: inspect source/angle memory counts
 - `npm run post-now`: immediately post every queued slot to enabled platforms
 - `npm start`: build and start cron + dashboard
+
+## Content OS
+
+The repo now includes a prompt pack in `content-os/`:
+
+- `SYSTEM.md`
+- `PLATFORM_RULES.md`
+- `QUALITY_CHECKS.md`
+- `BANNED_PHRASES.json`
+
+`src/ai.ts` uses this OS in practice by:
+
+- extracting a source summary plus multiple reusable angles first
+- drafting natively per platform from one selected angle instead of rewriting line by line
+- using lightweight learning notes from recent history to avoid repetition
+- checking banned phrases
+- scoring specificity, human tone, and platform fit before finalizing
 
 ## Data Files
 
 - `data/queue.json`: current slot queue
 - `data/used_ids.json`: dedupe list of Reddit posts already used
 - `data/history.json`: successful/partial publish history plus errors
+- `data/sources.json`: source registry with banked or exhausted status
+- `data/angles.json`: reusable angle bank with ready/queued/published states
 - `data/agent.log`: dashboard log feed
 
 These files are runtime state, not source code.
@@ -120,6 +150,7 @@ These files are runtime state, not source code.
 ## Known Risks
 
 - Instagram posting depends on the currently accessible Page continuing to expose the linked `instagram_business_account`.
+- LinkedIn posting still needs a live validation run from this repo even though the publish slice was ported from a working standalone project.
 - Facebook Group posting still depends on app/token/group permissions that are not fixed in code.
 - DALL-E image URLs are temporary. If an Instagram slot sits too long before posting, the image URL may expire.
 - Runtime JS can drift from TypeScript if `npm run build` is skipped.

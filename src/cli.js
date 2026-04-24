@@ -32,15 +32,10 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
-const config_1 = __importDefault(require("../config"));
-const ai = __importStar(require("./ai"));
 const logger = __importStar(require("./logger"));
-const reddit = __importStar(require("./reddit"));
 const store = __importStar(require("./store"));
+const content_engine_1 = require("./content-engine");
 const publish_1 = require("./publish");
 const SLOTS = [
     { id: 's1', label: '5:00 AM' },
@@ -53,12 +48,18 @@ async function main() {
     switch (cmd) {
         case 'status': {
             const queue = store.getQueue();
+            const memory = store.getMemoryStats();
             console.log('\n── Queue ─────────────────────────');
             for (const slot of SLOTS) {
                 const item = queue[slot.id];
                 console.log(`  ${slot.label.padEnd(8)} ${item ? '● ' + (item.title || '').substring(0, 50) : '(empty)'}`);
             }
-            console.log(`\n  Reddit posts used: ${store.getUsedIds().size}`);
+            console.log(`\n  Exhausted sources: ${memory.sources.exhausted}`);
+            console.log(`  Banked sources:    ${memory.sources.banked}`);
+            console.log(`  Ready angles:      ${memory.angles.ready}`);
+            console.log(`  Queued angles:     ${memory.angles.queued}`);
+            console.log(`  Published angles:  ${memory.angles.published}`);
+            console.log(`  Legacy used IDs:   ${memory.legacyUsedIds}`);
             console.log('──────────────────────────────────\n');
             break;
         }
@@ -69,6 +70,8 @@ async function main() {
                 if (!item)
                     continue;
                 console.log(`\n┌── ${slot.label} ──────────────────`);
+                console.log(`ANGLE: ${item.angleLabel || 'legacy'}${item.angleThesis ? ` — ${item.angleThesis}` : ''}`);
+                console.log('LINKEDIN:\n' + item.linkedin);
                 console.log('THREADS:\n' + item.threads);
                 console.log('\nINSTAGRAM:\n' + item.instagram);
                 console.log('\nFACEBOOK:\n' + item.facebook);
@@ -91,40 +94,30 @@ async function main() {
             }
             for (const entry of history) {
                 console.log(`\n[${entry.postedAt}] ${entry.slot} — ${entry.title || ''}`);
-                console.log(`Threads: ${entry.ids?.threads || 'failed'} | Instagram: ${entry.ids?.instagram || 'failed'} | Facebook: ${entry.ids?.facebook || 'failed'}`);
+                if (entry.angleLabel) {
+                    console.log(`Angle: ${entry.angleLabel}${entry.angleThesis ? ` — ${entry.angleThesis}` : ''}`);
+                }
+                console.log(`LinkedIn: ${entry.ids?.linkedin || 'failed'} | ` +
+                    `Threads: ${entry.ids?.threads || 'failed'} | ` +
+                    `Instagram: ${entry.ids?.instagram || 'failed'} | ` +
+                    `Facebook: ${entry.ids?.facebook || 'failed'}`);
                 if (entry.errors?.length) {
                     console.log('Errors: ' + entry.errors.join(', '));
                 }
             }
             break;
         }
+        case 'memory': {
+            const memory = store.getMemoryStats();
+            console.log('\n── Memory ───────────────────────');
+            console.log(JSON.stringify(memory, null, 2));
+            console.log('──────────────────────────────────\n');
+            break;
+        }
         case 'fetch': {
             logger.info('Manual fetch triggered');
-            const posts = await reddit.fetchPosts(config_1.default.REDDIT_SORT, config_1.default.REDDIT_LIMIT);
-            logger.info(`Fetched ${posts.length} posts`);
-            const used = store.getUsedIds();
-            const fresh = posts.filter(post => !used.has(post.id));
-            logger.info(`${fresh.length} unseen`);
-            let filled = 0;
-            for (const post of fresh) {
-                const slot = SLOTS.find(candidate => !store.getSlotPost(candidate.id));
-                if (!slot) {
-                    logger.info('All slots full');
-                    break;
-                }
-                logger.info(`Transforming: "${post.title.substring(0, 50)}"`);
-                const content = await ai.transformAll(post);
-                const queuedItem = {
-                    redditId: post.id,
-                    title: post.title,
-                    ...content,
-                };
-                store.setSlotPost(slot.id, queuedItem);
-                store.markUsed(post.id);
-                logger.info(`Filled ${slot.label}`);
-                filled++;
-            }
-            logger.info(`Done. ${filled} slots filled.`);
+            const stats = await (0, content_engine_1.fillEmptySlots)(SLOTS, logger);
+            logger.info(`Done. filled:${stats.filled} reused:${stats.reusedAngles} extracted:${stats.extractedSources} exhausted:${stats.exhaustedSources}`);
             break;
         }
         case 'post-now': {
@@ -136,24 +129,13 @@ async function main() {
                     continue;
                 }
                 const result = await (0, publish_1.publishQueuedItem)(item, logger);
+                (0, content_engine_1.finalizePublishResult)(slot, item, result);
                 if (result.completed) {
-                    store.clearSlotPost(slot.id);
-                    store.logHistory({
-                        slot: slot.label,
-                        title: item.title,
-                        threads: item.threads,
-                        instagram: item.instagram,
-                        facebook: item.facebook,
-                        imageUrl: item.imageUrl,
-                        postedAt: new Date().toISOString(),
-                        ids: result.ids,
-                        errors: result.errors,
-                    });
                     logger.info(`${slot.label} posted | active:${result.activePlatforms.join(',') || 'none'} | ` +
-                        `T:${result.ids.threads || '-'} | IG:${result.ids.instagram || '-'} | FB:${result.ids.facebook || '-'}`);
+                        `LI:${result.ids.linkedin || '-'} | T:${result.ids.threads || '-'} | ` +
+                        `IG:${result.ids.instagram || '-'} | FB:${result.ids.facebook || '-'}`);
                 }
                 else {
-                    store.setSlotPost(slot.id, result.nextItem);
                     logger.warn(`${slot.label} retained | pending:${result.pendingPlatforms.join(',')}`);
                 }
             }
@@ -163,11 +145,12 @@ async function main() {
             console.log(`
 Social Agent CLI
 ────────────────
-  npm run fetch      Fetch Reddit + transform for all platforms
+  npm run fetch      Fill empty slots from banked angles or fresh Reddit sources
   npm run queue      Preview queued content per platform
-  npm run status     Show slot fill status
+  npm run status     Show slot fill status and memory counts
   npm run history    Last 5 posting batches
   npm run post-now   Post all slots immediately
+  node src/cli.js memory
   npm start          Start agent (cron + dashboard)
       `);
     }

@@ -2,14 +2,14 @@ import cron from 'node-cron';
 
 import config from '../config';
 
-import * as ai from './ai';
 import * as logger from './logger';
-import * as reddit from './reddit';
-import * as store from './store';
 
+import { fillEmptySlots, finalizePublishResult } from './content-engine';
 import { publishQueuedItem } from './publish';
+import { getMemoryStats, getSlotPost } from './store';
+import { getAutomationGate, getEnabledPlatformLabels } from './runtime-policy';
 
-import type { QueueItem, Slot } from './types';
+import type { Slot } from './types';
 
 import './server';
 
@@ -20,54 +20,49 @@ const SLOTS: Slot[] = [
   { id: 's4', cron: '0 15 * * *', label: '3:00 PM' },
 ];
 
-function getEnabledPlatformLabels(): string[] {
-  const labels: string[] = [];
-  if (config.ENABLE_THREADS) labels.push('Threads');
-  if (config.ENABLE_INSTAGRAM) labels.push('Instagram');
-  if (config.ENABLE_FACEBOOK) labels.push('Facebook');
-  return labels;
+function logAutomationGate(prefix: string): void {
+  const gate = getAutomationGate();
+  if (gate.allowed) {
+    logger.info(
+      `${prefix} | automation ready | platforms:${gate.readiness.enabledPlatforms.join(', ') || 'none'} | billing:${gate.billing.status}`
+    );
+    return;
+  }
+
+  logger.warn(
+    `${prefix} | automation paused | ${gate.reasons.join(' | ')}`
+  );
 }
 
 async function refresh(): Promise<void> {
-  logger.info(`=== Social Agent refresh — u/${config.REDDIT_USER} ===`);
-
-  const posts = await reddit.fetchPosts(config.REDDIT_SORT, config.REDDIT_LIMIT);
-  logger.info(`Fetched ${posts.length} posts from allowed subreddits`);
-
-  const used = store.getUsedIds();
-  const fresh = posts.filter(post => !used.has(post.id));
-  logger.info(`${fresh.length} unseen posts`);
-
-  let filled = 0;
-
-  for (const post of fresh) {
-    const emptySlot = SLOTS.find(slot => !store.getSlotPost(slot.id));
-    if (!emptySlot) break;
-
-    logger.info(`Transforming for all platforms: "${post.title.substring(0, 50)}"`);
-
-    try {
-      const content = await ai.transformAll(post);
-      const queuedItem: QueueItem = {
-        redditId: post.id,
-        title: post.title,
-        ...content,
-      };
-      store.setSlotPost(emptySlot.id, queuedItem);
-      store.markUsed(post.id);
-      logger.info(`Filled slot ${emptySlot.label} — image: ${content.imageUrl ? 'yes' : 'no'}`);
-      filled++;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(`Transform failed for "${post.title.substring(0, 40)}": ${message}`);
-    }
+  const gate = getAutomationGate();
+  if (!gate.allowed) {
+    logger.warn(`Refresh skipped | ${gate.reasons.join(' | ')}`);
+    return;
   }
 
-  logger.info(`=== Refresh done. ${filled} slots filled ===`);
+  logger.info(`=== Social Agent refresh — u/${config.REDDIT_USER} ===`);
+
+  const stats = await fillEmptySlots(SLOTS, logger);
+  const memory = getMemoryStats();
+
+  logger.info(
+    `Refresh summary | fetched:${stats.fetched} filled:${stats.filled} reused:${stats.reusedAngles} extracted:${stats.extractedSources} exhausted:${stats.exhaustedSources}`
+  );
+  logger.info(
+    `Memory summary | sources banked:${memory.sources.banked} exhausted:${memory.sources.exhausted} | angles ready:${memory.angles.ready} queued:${memory.angles.queued} published:${memory.angles.published}`
+  );
+  logger.info('=== Refresh done ===');
 }
 
 async function fireSlot(slot: Slot): Promise<void> {
-  const item = store.getSlotPost(slot.id);
+  const gate = getAutomationGate();
+  if (!gate.allowed) {
+    logger.warn(`${slot.label} skipped | ${gate.reasons.join(' | ')}`);
+    return;
+  }
+
+  const item = getSlotPost(slot.id);
   if (!item) {
     logger.warn(`${slot.label} slot empty — skipping`);
     return;
@@ -79,25 +74,13 @@ async function fireSlot(slot: Slot): Promise<void> {
   );
 
   const result = await publishQueuedItem(item, logger);
+  finalizePublishResult(slot, item, result);
 
   if (result.completed) {
-    store.clearSlotPost(slot.id);
-    store.logHistory({
-      slot: slot.label,
-      title: item.title,
-      threads: item.threads,
-      instagram: item.instagram,
-      facebook: item.facebook,
-      imageUrl: item.imageUrl,
-      postedAt: new Date().toISOString(),
-      ids: result.ids,
-      errors: result.errors,
-    });
     logger.info(
       `${slot.label} posted successfully${result.activePlatforms.length ? ` to ${result.activePlatforms.join(', ')}` : ''}`
     );
   } else {
-    store.setSlotPost(slot.id, result.nextItem);
     logger.warn(
       `${slot.label} retained in queue for retry — pending: ${result.pendingPlatforms.join(', ')}`
     );
@@ -106,46 +89,12 @@ async function fireSlot(slot: Slot): Promise<void> {
 
 async function start(): Promise<void> {
   logger.info('Social Agent starting...');
-
-  const missing: string[] = [];
-  const enabledLabels = getEnabledPlatformLabels();
-
-  if (!config.OPENAI_API_KEY) {
-    missing.push('OPENAI_API_KEY');
-  }
-
-  if (config.ENABLE_THREADS && !config.THREADS_ACCESS_TOKEN) {
-    missing.push('THREADS_ACCESS_TOKEN');
-  }
-
-  if (config.ENABLE_INSTAGRAM) {
-    if (!config.META_ACCESS_TOKEN) missing.push('META_ACCESS_TOKEN');
-    if (!config.INSTAGRAM_ACCOUNT_ID) missing.push('INSTAGRAM_ACCOUNT_ID');
-  }
-
-  if (config.ENABLE_FACEBOOK) {
-    if (!config.META_ACCESS_TOKEN) missing.push('META_ACCESS_TOKEN');
-    if (!config.FACEBOOK_GROUP_ID) missing.push('FACEBOOK_GROUP_ID');
-  }
-
-  if (!enabledLabels.length) {
-    logger.error('No publishing platforms are enabled — set ENABLE_THREADS, ENABLE_INSTAGRAM, or ENABLE_FACEBOOK in .env');
-    process.exit(1);
-  }
-
-  if (missing.length) {
-    logger.error(`Missing config: ${[...new Set(missing)].join(', ')} — check your .env`);
-    process.exit(1);
-  }
-
-  logger.info(`Enabled publishing platforms: ${enabledLabels.join(', ')}`);
-
-  await refresh();
+  logAutomationGate('Startup status');
 
   cron.schedule('30 4 * * *', () => {
     void refresh();
   }, { timezone: config.TIMEZONE });
-  logger.info('Daily refresh at 4:30 AM');
+  logger.info('Daily refresh scheduled at 4:30 AM');
 
   for (const slot of SLOTS) {
     cron.schedule(slot.cron!, () => {
@@ -154,7 +103,9 @@ async function start(): Promise<void> {
     logger.info(`Slot scheduled: ${slot.label}`);
   }
 
-  logger.info(`Social Agent running. Dashboard → http://localhost:${config.GUI_PORT}`);
+  await refresh();
+
+  logger.info(`Social Agent running. Dashboard/API → http://localhost:${config.GUI_PORT}`);
 }
 
 void start().catch(error => {

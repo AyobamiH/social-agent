@@ -1,5 +1,6 @@
 import * as facebook from './facebook';
 import * as instagram from './instagram';
+import * as linkedin from './linkedin';
 import * as threads from './threads';
 import config from '../config';
 
@@ -25,6 +26,7 @@ interface PlatformAvailability {
 const PLATFORM_STEPS: PlatformStep[] = [
   { key: 'threads', label: 'Threads', run: item => threads.publish(item.threads) },
   { key: 'instagram', label: 'Instagram', run: item => instagram.publish(item.instagram, item.imageUrl) },
+  { key: 'linkedin', label: 'LinkedIn', run: item => linkedin.publish(item.linkedin) },
   { key: 'facebook', label: 'Facebook', run: item => facebook.publish(item.facebook) },
 ];
 
@@ -46,6 +48,13 @@ function getPlatformAvailability(step: PlatformStep, item: QueueItem): PlatformA
       }
       if (!item.instagram?.trim()) return { enabled: false, reason: 'Instagram caption is empty' };
       if (!item.imageUrl?.trim()) return { enabled: false, reason: 'imageUrl is empty' };
+      return { enabled: true };
+
+    case 'linkedin':
+      if (!config.ENABLE_LINKEDIN) return { enabled: false, reason: 'disabled via ENABLE_LINKEDIN=false' };
+      if (!config.LINKEDIN_TOKEN) return { enabled: false, reason: 'LINKEDIN_TOKEN not set' };
+      if (!config.LINKEDIN_PERSON_URN) return { enabled: false, reason: 'LINKEDIN_PERSON_URN not set' };
+      if (!item.linkedin?.trim()) return { enabled: false, reason: 'LinkedIn post text is empty' };
       return { enabled: true };
 
     case 'facebook':

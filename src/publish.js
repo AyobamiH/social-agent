@@ -40,11 +40,13 @@ exports.PLATFORM_STEPS = void 0;
 exports.publishQueuedItem = publishQueuedItem;
 const facebook = __importStar(require("./facebook"));
 const instagram = __importStar(require("./instagram"));
+const linkedin = __importStar(require("./linkedin"));
 const threads = __importStar(require("./threads"));
 const config_1 = __importDefault(require("../config"));
 const PLATFORM_STEPS = [
     { key: 'threads', label: 'Threads', run: item => threads.publish(item.threads) },
     { key: 'instagram', label: 'Instagram', run: item => instagram.publish(item.instagram, item.imageUrl) },
+    { key: 'linkedin', label: 'LinkedIn', run: item => linkedin.publish(item.linkedin) },
     { key: 'facebook', label: 'Facebook', run: item => facebook.publish(item.facebook) },
 ];
 exports.PLATFORM_STEPS = PLATFORM_STEPS;
@@ -71,6 +73,16 @@ function getPlatformAvailability(step, item) {
                 return { enabled: false, reason: 'Instagram caption is empty' };
             if (!item.imageUrl?.trim())
                 return { enabled: false, reason: 'imageUrl is empty' };
+            return { enabled: true };
+        case 'linkedin':
+            if (!config_1.default.ENABLE_LINKEDIN)
+                return { enabled: false, reason: 'disabled via ENABLE_LINKEDIN=false' };
+            if (!config_1.default.LINKEDIN_TOKEN)
+                return { enabled: false, reason: 'LINKEDIN_TOKEN not set' };
+            if (!config_1.default.LINKEDIN_PERSON_URN)
+                return { enabled: false, reason: 'LINKEDIN_PERSON_URN not set' };
+            if (!item.linkedin?.trim())
+                return { enabled: false, reason: 'LinkedIn post text is empty' };
             return { enabled: true };
         case 'facebook':
             if (!config_1.default.ENABLE_FACEBOOK)
