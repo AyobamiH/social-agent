@@ -84,6 +84,7 @@ What is implemented:
   - source memory
   - angle memory
   - logs
+  - platform capability state such as X draft-only cooldown windows
 - New control-plane state is stored in:
   - `data/control-plane.sqlite`
   - `data/control-plane.key` if `APP_ENCRYPTION_KEY` is not provided
@@ -172,7 +173,7 @@ These items are still recommended before exposing the backend on the public inte
 - add server-side secret rotation workflow
 - add account lockout / brute-force throttling
 - add health subchecks and metrics endpoint
-- add structured provider error taxonomy
+- expand structured provider error taxonomy and provider capability state beyond the current X draft-only fallback
 
 ### Priority 3
 
@@ -187,4 +188,3 @@ These items are still recommended before exposing the backend on the public inte
 - keep auth, secrets, billing, and audit concerns separate from publish logic
 - prefer strict validation and explicit gating over permissive silent fallbacks
 - preserve the single-tenant model unless product strategy changes
-
