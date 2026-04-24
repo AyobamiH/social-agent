@@ -30,6 +30,7 @@ export interface RuntimeSettings {
   AI_STYLE?: string;
   CUSTOM_PROMPT?: string;
   ENABLE_LINKEDIN?: boolean;
+  ENABLE_X?: boolean;
   ENABLE_THREADS?: boolean;
   ENABLE_INSTAGRAM?: boolean;
   ENABLE_FACEBOOK?: boolean;
@@ -42,6 +43,11 @@ export interface RuntimeSecrets {
   OPENAI_API_KEY?: string;
   LINKEDIN_TOKEN?: string;
   LINKEDIN_PERSON_URN?: string;
+  X_API_KEY?: string;
+  X_API_SECRET?: string;
+  X_ACCESS_TOKEN?: string;
+  X_ACCESS_TOKEN_SECRET?: string;
+  X_OAUTH2_ACCESS_TOKEN?: string;
   THREADS_ACCESS_TOKEN?: string;
   THREADS_USER_ID?: string;
   META_ACCESS_TOKEN?: string;
@@ -558,6 +564,11 @@ export function getRuntimeSecretPresence(): Record<keyof RuntimeSecrets, boolean
     OPENAI_API_KEY: Boolean(secrets.OPENAI_API_KEY),
     LINKEDIN_TOKEN: Boolean(secrets.LINKEDIN_TOKEN),
     LINKEDIN_PERSON_URN: Boolean(secrets.LINKEDIN_PERSON_URN),
+    X_API_KEY: Boolean(secrets.X_API_KEY),
+    X_API_SECRET: Boolean(secrets.X_API_SECRET),
+    X_ACCESS_TOKEN: Boolean(secrets.X_ACCESS_TOKEN),
+    X_ACCESS_TOKEN_SECRET: Boolean(secrets.X_ACCESS_TOKEN_SECRET),
+    X_OAUTH2_ACCESS_TOKEN: Boolean(secrets.X_OAUTH2_ACCESS_TOKEN),
     THREADS_ACCESS_TOKEN: Boolean(secrets.THREADS_ACCESS_TOKEN),
     THREADS_USER_ID: Boolean(secrets.THREADS_USER_ID),
     META_ACCESS_TOKEN: Boolean(secrets.META_ACCESS_TOKEN),
@@ -584,6 +595,7 @@ function sanitizeRuntimeSettingsPatch(patch: Partial<RuntimeSettings>): Partial<
   if (typeof patch.AI_STYLE === 'string') next.AI_STYLE = patch.AI_STYLE.trim();
   if (typeof patch.CUSTOM_PROMPT === 'string') next.CUSTOM_PROMPT = patch.CUSTOM_PROMPT;
   if (typeof patch.ENABLE_LINKEDIN === 'boolean') next.ENABLE_LINKEDIN = patch.ENABLE_LINKEDIN;
+  if (typeof patch.ENABLE_X === 'boolean') next.ENABLE_X = patch.ENABLE_X;
   if (typeof patch.ENABLE_THREADS === 'boolean') next.ENABLE_THREADS = patch.ENABLE_THREADS;
   if (typeof patch.ENABLE_INSTAGRAM === 'boolean') next.ENABLE_INSTAGRAM = patch.ENABLE_INSTAGRAM;
   if (typeof patch.ENABLE_FACEBOOK === 'boolean') next.ENABLE_FACEBOOK = patch.ENABLE_FACEBOOK;

@@ -205,6 +205,7 @@ function getEffectiveSettings() {
         AI_STYLE: config_1.default.AI_STYLE,
         CUSTOM_PROMPT: config_1.default.CUSTOM_PROMPT,
         ENABLE_LINKEDIN: config_1.default.ENABLE_LINKEDIN,
+        ENABLE_X: config_1.default.ENABLE_X,
         META_GRAPH_VERSION: config_1.default.META_GRAPH_VERSION,
         THREADS_GRAPH_VERSION: config_1.default.THREADS_GRAPH_VERSION,
         ENABLE_THREADS: config_1.default.ENABLE_THREADS,
@@ -610,6 +611,7 @@ const routes = [
                     platforms: {
                         linkedin: config_1.default.ENABLE_LINKEDIN,
                         threads: config_1.default.ENABLE_THREADS,
+                        x: config_1.default.ENABLE_X,
                         instagram: config_1.default.ENABLE_INSTAGRAM,
                         facebook: config_1.default.ENABLE_FACEBOOK,
                     },
@@ -691,8 +693,9 @@ const routes = [
                 jsonErr(res, 'Slot is empty', 400, context.origin);
                 return;
             }
-            const result = await (0, publish_1.publishQueuedItem)(item, logger);
-            (0, content_engine_1.finalizePublishResult)(slot, item, result);
+            const hydratedItem = await (0, content_engine_1.hydrateQueuedItemForActivePlatforms)(slot.id, item, logger);
+            const result = await (0, publish_1.publishQueuedItem)(hydratedItem, logger);
+            (0, content_engine_1.finalizePublishResult)(slot, hydratedItem, result);
             (0, control_plane_1.recordAudit)('automation.post_slot', slot.id, {
                 completed: result.completed,
                 pendingPlatforms: result.pendingPlatforms,
@@ -721,8 +724,9 @@ const routes = [
                     results.push({ slot: slot.label, skipped: true });
                     continue;
                 }
-                const result = await (0, publish_1.publishQueuedItem)(item, logger);
-                (0, content_engine_1.finalizePublishResult)(slot, item, result);
+                const hydratedItem = await (0, content_engine_1.hydrateQueuedItemForActivePlatforms)(slot.id, item, logger);
+                const result = await (0, publish_1.publishQueuedItem)(hydratedItem, logger);
+                (0, content_engine_1.finalizePublishResult)(slot, hydratedItem, result);
                 results.push({
                     slot: slot.label,
                     ids: result.ids,

@@ -1,20 +1,31 @@
 # Social Agent
 
-Fetches posts by `u/advanced_pudding9228` from `r/openclawbot` and `r/lovablebuildershub`, transforms them into platform-native content with OpenAI GPT-4o, generates images with DALL-E 3, and posts to **LinkedIn + Threads + Instagram + Facebook Group** at **5AM · 7AM · 12PM · 3PM** daily.
+`social-agent` turns selected Reddit posts into platform-native social drafts, banks reusable angles, fills four daily queue slots, and publishes to whichever platforms are enabled.
 
-Dashboard at **http://localhost:4001**.
+Current platform surface:
+- LinkedIn
+- Threads
+- X/Twitter
+- Instagram
+- Facebook Group
 
-The LinkedIn publishing slice has now been merged into this repo so `social-agent` can become the single runtime for every platform.
+Dashboard: [http://localhost:4001](http://localhost:4001)
 
 Maintainer context for humans and coding agents lives in `AGENTS.md`.
 
-The tracked default profile is still **Threads + Instagram**, with Facebook still disabled until the group permission issue is resolved and LinkedIn left off until its merged slice is verified live in this repo.
+## What changed recently
 
-The platform drafting rules now live in `content-os/` so the generator uses a source-extraction step instead of naive line-by-line rewriting.
+- The runtime is now TS-first. Package scripts execute `.ts` entrypoints through `tsx`.
+- X is now a first-class platform in the content model, queue, history, API, dashboard, and publish flow.
+- X v1 is text-only and single-post only.
+- The content engine banks source summaries plus reusable angles so one Reddit source can support multiple future posts.
 
-The content system now keeps a source registry plus an angle bank so one Reddit post can feed multiple future posts without re-extracting the same source every time.
-
----
+Tracked default profile:
+- `ENABLE_THREADS=true`
+- `ENABLE_INSTAGRAM=true`
+- `ENABLE_LINKEDIN=false`
+- `ENABLE_X=false`
+- `ENABLE_FACEBOOK=false`
 
 ## Quick start
 
@@ -23,20 +34,64 @@ git clone https://github.com/AyobamiH/social-agent.git
 cd social-agent
 npm install
 cp .env.example .env
-nano .env          # fill in your credentials
-npm run fetch      # test the pipeline
-npm run queue      # preview all platform versions
+# fill in your credentials
+npm run fetch
+npm run queue
 npm run start:pm2
 pm2 save && pm2 startup
 ```
 
----
+## Runtime model
 
-## Getting your Meta credentials
+- Author in TypeScript.
+- Run the app through package scripts such as `npm start` and `npm run status`.
+- Do not edit emitted `src/*.js` files by hand.
+- Run `npm run build` when you want refreshed emitted JS in the repo.
 
-### 1. Meta Access Token
-Go to https://developers.facebook.com/tools/explorer  
-Select your app → generate token with these permissions:
+## Platform setup
+
+### LinkedIn
+
+Set:
+
+```env
+ENABLE_LINKEDIN=true
+LINKEDIN_TOKEN=...
+LINKEDIN_PERSON_URN=urn:li:person:...
+```
+
+The LinkedIn publisher uses the UGC Posts API and is text-only.
+
+### X / Twitter
+
+Set:
+
+```env
+ENABLE_X=true
+X_API_KEY=...
+X_API_SECRET=...
+X_ACCESS_TOKEN=...
+X_ACCESS_TOKEN_SECRET=...
+```
+
+or:
+
+```env
+ENABLE_X=true
+X_OAUTH2_ACCESS_TOKEN=...
+```
+
+Notes:
+- Preferred path is OAuth 1.0a user-context credentials plus the legacy v1.1 user endpoints.
+- A real OAuth 2.0 user access token is supported as fallback.
+- App-only bearer tokens and OAuth client secrets are not used for posting.
+- Validate the token with `npm run test-x`.
+- Publish a deliberate live smoke test with `npm run test-x -- --live-post`.
+- If auth passes but publish is rejected by X for credits or access tier, the app automatically keeps X in draft-only mode for a cooldown window so other platforms can continue publishing.
+
+### Threads / Instagram / Facebook
+
+Get a Meta token from [Meta Graph API Explorer](https://developers.facebook.com/tools/explorer) with:
 - `threads_basic`
 - `threads_content_publish`
 - `instagram_basic`
@@ -46,67 +101,55 @@ Select your app → generate token with these permissions:
 - `publish_to_groups`
 - `groups_access_member_info`
 
-### 2. Threads User ID
+Resolve the Threads user ID:
+
 ```bash
 curl "https://graph.threads.net/me?fields=id,username&access_token=YOUR_THREADS_TOKEN"
 ```
 
-### 3. Instagram Account ID
-```bash
-# Get your Facebook Pages
-curl "https://graph.facebook.com/v25.0/me/accounts?access_token=YOUR_TOKEN"
+Resolve the Instagram account from the linked Page:
 
-# Get Instagram account linked to a Page
+```bash
+curl "https://graph.facebook.com/v25.0/me/accounts?access_token=YOUR_TOKEN"
 curl "https://graph.facebook.com/v25.0/PAGE_ID?fields=instagram_business_account&access_token=YOUR_TOKEN"
 ```
 
 If `FACEBOOK_PAGE_ID` is set, the app can auto-discover the linked Instagram business account and derive a Page access token for Instagram publishing.
 
-Instagram publishing has been live-tested successfully against the currently accessible Page-linked account.
+Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 
-### 3b. LinkedIn credentials
-Generate a LinkedIn user token with `w_member_social`, then set:
+## Platform behavior
 
-```env
-ENABLE_LINKEDIN=true
-LINKEDIN_TOKEN=...
-LINKEDIN_PERSON_URN=urn:li:person:...
-```
+| Platform | Format | Writing shape | Media |
+|---|---|---|---|
+| LinkedIn | Text post | Concrete, professional, operational | None |
+| Threads | Text post | Punchy, direct, conversational | None |
+| X | Text post | Sharp, reply-worthy, under 280 chars | None |
+| Instagram | Caption + image | Visual, clear, save-worthy | DALL-E image when enabled |
+| Facebook | Text post | Conversational with practical framing | None |
 
-The merged LinkedIn publisher uses the UGC Posts API (`/v2/ugcPosts`) and publishes text-only posts as the authenticated member.
-
-### 4. Facebook Group ID
-Found in the group URL: `facebook.com/groups/GROUP_ID`
-
----
-
-## How each platform is written differently
-
-| Platform | Length | Tone | Hashtags | Image |
-|---|---|---|---|---|
-| LinkedIn | 120-220 words | Concrete, professional, work-real | Optional and minimal | None |
-| Threads | 500 chars max | Punchy, direct | Optional and minimal | None |
-| Instagram | Caption-first, save-worthy | Clear, visual, emotionally legible | Minimal | DALL-E 3 generated |
-| Facebook | 300 words | Conversational | Optional | None |
-
----
-
-## CLI commands
+## Commands
 
 | Command | What it does |
 |---|---|
-| `npm run fetch` | Fetch Reddit + transform for all enabled platforms |
-| `npm run queue` | Preview all platform versions per slot |
-| `npm run status` | Show slot fill status |
-| `npm run memory` | Show source/angle memory counts |
-| `npm run post-now` | Post all slots immediately |
-| `npm run deploy` | Pull from GitHub + restart |
+| `npm run typecheck` | Validate TypeScript without emitting |
+| `npm run build` | Emit runtime JS in place |
+| `npm start` | Start the scheduler and dashboard through `tsx` |
+| `npm run fetch` | Fill empty queue slots from banked angles or fresh Reddit sources |
+| `npm run queue` | Preview queued drafts for every enabled platform |
+| `npm run status` | Show slot occupancy and memory counts |
+| `npm run memory` | Show source and angle inventory |
+| `npm run history` | Show recent publish history |
+| `npm run post-now` | Publish queued slots immediately |
+| `npm run test-meta` | Diagnose Meta credentials and linked assets |
+| `npm run test-x` | Validate X auth and optionally live-post a test update |
+| `npm run deploy` | Pull latest code, install deps, and restart PM2 |
 
----
+## Operational notes
 
-## Cost per fetch cycle
-
-- New sources use one extraction pass to bank multiple reusable angles.
-- Queued posts only draft enabled platforms, and banked angles can be reused later without re-extracting the source.
+- Draft generation skips disabled platforms to protect token spend.
+- Existing queued items can auto-hydrate missing X drafts from stored source and angle memory when X is enabled later.
+- X can authenticate successfully and still be blocked from posting by X credits or access tier; in that case the runtime falls back to draft-only mode for X.
 - Instagram image generation only runs when Instagram is enabled.
-- Exact OpenAI cost depends on how many platforms are enabled and which model you choose in `.env`.
+- Failed platforms no longer force the whole queue item to disappear.
+- Partial success is supported, so one platform can succeed while another is retained for retry.

@@ -12,6 +12,7 @@ import type {
   FillQueueStats,
   HistoryEntry,
   Logger,
+  PlatformKey,
   PublishResult,
   QueueItem,
   RedditPost,
@@ -68,10 +69,81 @@ function buildQueueItem(
     imagePrompt: draft.imagePrompt,
     linkedin: draft.linkedin,
     threads: draft.threads,
+    x: draft.x,
     instagram: draft.instagram,
     facebook: draft.facebook,
     imageUrl: draft.imageUrl,
   };
+}
+
+function getPlatformText(item: QueueItem, platform: PlatformKey): string {
+  switch (platform) {
+    case 'linkedin':
+      return item.linkedin;
+    case 'threads':
+      return item.threads;
+    case 'x':
+      return item.x;
+    case 'instagram':
+      return item.instagram;
+    case 'facebook':
+      return item.facebook;
+  }
+}
+
+function mergeDraftIntoQueueItem(item: QueueItem, draft: Awaited<ReturnType<typeof ai.draftPlatforms>>): QueueItem {
+  return {
+    ...item,
+    linkedin: draft.linkedin || item.linkedin,
+    threads: draft.threads || item.threads,
+    x: draft.x || item.x,
+    instagram: draft.instagram || item.instagram,
+    facebook: draft.facebook || item.facebook,
+    imageUrl: draft.imageUrl || item.imageUrl,
+    imagePrompt: draft.imagePrompt || item.imagePrompt,
+    draftMeta: {
+      ...(item.draftMeta || {}),
+      ...(draft.draftMeta || {}),
+    },
+    draftedPlatforms: [...new Set([...(item.draftedPlatforms || []), ...draft.draftedPlatforms])],
+  };
+}
+
+async function hydrateMissingDraftPlatforms(
+  slotId: Slot['id'],
+  item: QueueItem,
+  logger: Logger
+): Promise<QueueItem> {
+  const activePlatforms = ai.getActiveDraftPlatforms();
+  const missingPlatforms = activePlatforms.filter(platform => !getPlatformText(item, platform)?.trim());
+
+  if (!missingPlatforms.length) {
+    return item;
+  }
+
+  if (!item.angleId) {
+    logger.warn(`Skipped draft hydration for ${slotId} because angleId is missing`);
+    return item;
+  }
+
+  const source = store.getSource(item.redditId);
+  const angle = store.getAngle(item.angleId);
+
+  if (!source?.summary || !angle) {
+    logger.warn(
+      `Skipped draft hydration for ${slotId} because stored source summary or angle metadata is missing`
+    );
+    return item;
+  }
+
+  logger.info(
+    `Hydrating ${missingPlatforms.join(', ')} for ${slotId} from ${item.redditId} using angle "${angle.label}"`
+  );
+
+  const draft = await ai.draftPlatforms(source, source.summary, toAngleCandidate(angle), missingPlatforms);
+  const nextItem = mergeDraftIntoQueueItem(item, draft);
+  store.setSlotPost(slotId, nextItem);
+  return nextItem;
 }
 
 async function queueAngleIntoSlot(
@@ -106,6 +178,18 @@ export async function fillEmptySlots(slots: Slot[], logger: Logger): Promise<Fil
     skippedExhausted: 0,
     skippedReserved: 0,
   };
+
+  for (const slot of slots) {
+    const item = store.getSlotPost(slot.id);
+    if (!item) continue;
+
+    try {
+      await hydrateMissingDraftPlatforms(slot.id, item, logger);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to hydrate missing drafts for ${slot.id}: ${message}`);
+    }
+  }
 
   const reservedSourceIds = getReservedSourceIds();
 
@@ -217,6 +301,7 @@ function buildHistoryEntry(slot: Slot, item: QueueItem, result: PublishResult): 
     imagePrompt: item.imagePrompt,
     linkedin: item.linkedin,
     threads: item.threads,
+    x: item.x,
     instagram: item.instagram,
     facebook: item.facebook,
     imageUrl: item.imageUrl,
@@ -248,4 +333,12 @@ export function releaseSlot(slotId: Slot['id']): QueueItem | null {
 
   store.clearSlotPost(slotId);
   return item;
+}
+
+export async function hydrateQueuedItemForActivePlatforms(
+  slotId: Slot['id'],
+  item: QueueItem,
+  logger: Logger
+): Promise<QueueItem> {
+  return hydrateMissingDraftPlatforms(slotId, item, logger);
 }

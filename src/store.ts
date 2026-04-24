@@ -5,6 +5,9 @@ import type {
   AngleRecord,
   HistoryEntry,
   MemoryStats,
+  PlatformKey,
+  PlatformPublishState,
+  PlatformPublishStateMap,
   QueueItem,
   QueueState,
   SlotId,
@@ -18,6 +21,7 @@ const USED_FILE = path.join(DATA_DIR, 'used_ids.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const SOURCES_FILE = path.join(DATA_DIR, 'sources.json');
 const ANGLES_FILE = path.join(DATA_DIR, 'angles.json');
+const PLATFORM_STATE_FILE = path.join(DATA_DIR, 'platform-state.json');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -445,4 +449,44 @@ export function getMemoryStats(): MemoryStats {
     },
     legacyUsedIds: getUsedIds().size,
   };
+}
+
+export function getPlatformPublishStates(): PlatformPublishStateMap {
+  return readJSON(PLATFORM_STATE_FILE, {} as PlatformPublishStateMap);
+}
+
+export function getPlatformPublishState(platform: PlatformKey): PlatformPublishState | undefined {
+  return getPlatformPublishStates()[platform];
+}
+
+export function setPlatformPublishBlocked(
+  platform: PlatformKey,
+  reason: string,
+  blockedUntil: string
+): PlatformPublishState {
+  const states = getPlatformPublishStates();
+  const nextState: PlatformPublishState = {
+    ...(states[platform] || {}),
+    publishBlockedReason: reason,
+    publishBlockedUntil: blockedUntil,
+    lastFailureAt: nowIso(),
+  };
+
+  states[platform] = nextState;
+  writeJSON(PLATFORM_STATE_FILE, states);
+  return nextState;
+}
+
+export function clearPlatformPublishBlocked(platform: PlatformKey): PlatformPublishState {
+  const states = getPlatformPublishStates();
+  const nextState: PlatformPublishState = {
+    ...(states[platform] || {}),
+    publishBlockedReason: undefined,
+    publishBlockedUntil: undefined,
+    lastSuccessAt: nowIso(),
+  };
+
+  states[platform] = nextState;
+  writeJSON(PLATFORM_STATE_FILE, states);
+  return nextState;
 }

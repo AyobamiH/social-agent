@@ -295,6 +295,8 @@ components:
           type: string
         ENABLE_LINKEDIN:
           type: boolean
+        ENABLE_X:
+          type: boolean
         ENABLE_THREADS:
           type: boolean
         ENABLE_INSTAGRAM:
@@ -310,6 +312,11 @@ components:
 
     RuntimeSecretPresence:
       type: object
+      description: |
+        Boolean secret presence map. Keys may include OPENAI_API_KEY, LINKEDIN_TOKEN, LINKEDIN_PERSON_URN,
+        X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET, X_OAUTH2_ACCESS_TOKEN,
+        THREADS_ACCESS_TOKEN, THREADS_USER_ID, META_ACCESS_TOKEN, FACEBOOK_PAGE_ACCESS_TOKEN,
+        INSTAGRAM_ACCOUNT_ID, FACEBOOK_GROUP_ID, FACEBOOK_USER_ID, and FACEBOOK_PAGE_ID.
       additionalProperties:
         type: boolean
 
@@ -404,17 +411,20 @@ components:
 
     PlatformKey:
       type: string
-      enum: [threads, instagram, linkedin, facebook]
+      enum: [threads, x, instagram, linkedin, facebook]
 
     QueueItem:
       type: object
       additionalProperties: true
       description: |
         Legacy queue payload. It is still weakly validated on writes and returned raw from JSON-backed storage.
+        Platform fields may include linkedin, threads, x, instagram, facebook, plus ids and publishErrors keyed by platform.
 
     HistoryEntry:
       type: object
       additionalProperties: true
+      description: |
+        Legacy publish history payload. Platform ids may include ids.x for X/Twitter publishes.
 
     SourceRecord:
       type: object

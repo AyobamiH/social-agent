@@ -19,6 +19,7 @@ export interface AutomationGate {
 export function getEnabledPlatformLabels(): string[] {
   const labels: string[] = [];
   if (config.ENABLE_THREADS) labels.push('Threads');
+  if (config.ENABLE_X) labels.push('X');
   if (config.ENABLE_INSTAGRAM) labels.push('Instagram');
   if (config.ENABLE_LINKEDIN) labels.push('LinkedIn');
   if (config.ENABLE_FACEBOOK) labels.push('Facebook');
@@ -28,6 +29,13 @@ export function getEnabledPlatformLabels(): string[] {
 export function getRuntimeReadiness(): RuntimeReadiness {
   const missing: string[] = [];
   const enabledPlatforms = getEnabledPlatformLabels();
+  const hasXOAuth1 = Boolean(
+    config.X_API_KEY
+    && config.X_API_SECRET
+    && config.X_ACCESS_TOKEN
+    && config.X_ACCESS_TOKEN_SECRET
+  );
+  const hasXOAuth2 = Boolean(config.X_OAUTH2_ACCESS_TOKEN);
 
   if (!config.OPENAI_API_KEY) {
     missing.push('OPENAI_API_KEY');
@@ -47,6 +55,10 @@ export function getRuntimeReadiness(): RuntimeReadiness {
 
   if (config.ENABLE_THREADS && !config.THREADS_ACCESS_TOKEN) {
     missing.push('THREADS_ACCESS_TOKEN');
+  }
+
+  if (config.ENABLE_X && !hasXOAuth1 && !hasXOAuth2) {
+    missing.push('X_OAUTH2_ACCESS_TOKEN or X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_TOKEN_SECRET');
   }
 
   if (config.ENABLE_INSTAGRAM) {

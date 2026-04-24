@@ -27,7 +27,7 @@ import {
   updateRuntimeSecrets,
   updateRuntimeSettings,
 } from './control-plane';
-import { fillEmptySlots, finalizePublishResult, releaseSlot } from './content-engine';
+import { fillEmptySlots, finalizePublishResult, hydrateQueuedItemForActivePlatforms, releaseSlot } from './content-engine';
 import { publishQueuedItem } from './publish';
 import { getAutomationGate, getRuntimeReadiness } from './runtime-policy';
 
@@ -251,6 +251,7 @@ function getEffectiveSettings(): Record<string, unknown> {
     AI_STYLE: config.AI_STYLE,
     CUSTOM_PROMPT: config.CUSTOM_PROMPT,
     ENABLE_LINKEDIN: config.ENABLE_LINKEDIN,
+    ENABLE_X: config.ENABLE_X,
     META_GRAPH_VERSION: config.META_GRAPH_VERSION,
     THREADS_GRAPH_VERSION: config.THREADS_GRAPH_VERSION,
     ENABLE_THREADS: config.ENABLE_THREADS,
@@ -702,12 +703,13 @@ const routes: RouteDef[] = [
           allowedSubs: [...config.REDDIT_ALLOWED_SUBS],
           model: config.OPENAI_MODEL,
           timezone: config.TIMEZONE,
-          platforms: {
-            linkedin: config.ENABLE_LINKEDIN,
-            threads: config.ENABLE_THREADS,
-            instagram: config.ENABLE_INSTAGRAM,
-            facebook: config.ENABLE_FACEBOOK,
-          },
+            platforms: {
+              linkedin: config.ENABLE_LINKEDIN,
+              threads: config.ENABLE_THREADS,
+              x: config.ENABLE_X,
+              instagram: config.ENABLE_INSTAGRAM,
+              facebook: config.ENABLE_FACEBOOK,
+            },
         },
       }, 200, context.origin);
     },
@@ -787,8 +789,9 @@ const routes: RouteDef[] = [
         return;
       }
 
-      const result = await publishQueuedItem(item, logger);
-      finalizePublishResult(slot, item, result);
+      const hydratedItem = await hydrateQueuedItemForActivePlatforms(slot.id, item, logger);
+      const result = await publishQueuedItem(hydratedItem, logger);
+      finalizePublishResult(slot, hydratedItem, result);
       recordAudit('automation.post_slot', slot.id, {
         completed: result.completed,
         pendingPlatforms: result.pendingPlatforms,
@@ -820,8 +823,9 @@ const routes: RouteDef[] = [
           continue;
         }
 
-        const result = await publishQueuedItem(item, logger);
-        finalizePublishResult(slot, item, result);
+        const hydratedItem = await hydrateQueuedItemForActivePlatforms(slot.id, item, logger);
+        const result = await publishQueuedItem(hydratedItem, logger);
+        finalizePublishResult(slot, hydratedItem, result);
 
         results.push({
           slot: slot.label,

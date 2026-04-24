@@ -49,6 +49,7 @@ async function main() {
         case 'status': {
             const queue = store.getQueue();
             const memory = store.getMemoryStats();
+            const xPublishState = store.getPlatformPublishState('x');
             console.log('\n── Queue ─────────────────────────');
             for (const slot of SLOTS) {
                 const item = queue[slot.id];
@@ -60,6 +61,9 @@ async function main() {
             console.log(`  Queued angles:     ${memory.angles.queued}`);
             console.log(`  Published angles:  ${memory.angles.published}`);
             console.log(`  Legacy used IDs:   ${memory.legacyUsedIds}`);
+            if (xPublishState?.publishBlockedUntil && Date.parse(xPublishState.publishBlockedUntil) > Date.now()) {
+                console.log(`  X publish mode:    draft-only until ${xPublishState.publishBlockedUntil}`);
+            }
             console.log('──────────────────────────────────\n');
             break;
         }
@@ -73,6 +77,7 @@ async function main() {
                 console.log(`ANGLE: ${item.angleLabel || 'legacy'}${item.angleThesis ? ` — ${item.angleThesis}` : ''}`);
                 console.log('LINKEDIN:\n' + item.linkedin);
                 console.log('THREADS:\n' + item.threads);
+                console.log('\nX:\n' + item.x);
                 console.log('\nINSTAGRAM:\n' + item.instagram);
                 console.log('\nFACEBOOK:\n' + item.facebook);
                 console.log('\nIMAGE URL:\n' + (item.imageUrl || 'none'));
@@ -99,6 +104,7 @@ async function main() {
                 }
                 console.log(`LinkedIn: ${entry.ids?.linkedin || 'failed'} | ` +
                     `Threads: ${entry.ids?.threads || 'failed'} | ` +
+                    `X: ${entry.ids?.x || 'failed'} | ` +
                     `Instagram: ${entry.ids?.instagram || 'failed'} | ` +
                     `Facebook: ${entry.ids?.facebook || 'failed'}`);
                 if (entry.errors?.length) {
@@ -128,11 +134,12 @@ async function main() {
                     logger.warn(`${slot.label} empty`);
                     continue;
                 }
-                const result = await (0, publish_1.publishQueuedItem)(item, logger);
-                (0, content_engine_1.finalizePublishResult)(slot, item, result);
+                const hydratedItem = await (0, content_engine_1.hydrateQueuedItemForActivePlatforms)(slot.id, item, logger);
+                const result = await (0, publish_1.publishQueuedItem)(hydratedItem, logger);
+                (0, content_engine_1.finalizePublishResult)(slot, hydratedItem, result);
                 if (result.completed) {
                     logger.info(`${slot.label} posted | active:${result.activePlatforms.join(',') || 'none'} | ` +
-                        `LI:${result.ids.linkedin || '-'} | T:${result.ids.threads || '-'} | ` +
+                        `LI:${result.ids.linkedin || '-'} | T:${result.ids.threads || '-'} | X:${result.ids.x || '-'} | ` +
                         `IG:${result.ids.instagram || '-'} | FB:${result.ids.facebook || '-'}`);
                 }
                 else {
@@ -150,7 +157,7 @@ Social Agent CLI
   npm run status     Show slot fill status and memory counts
   npm run history    Last 5 posting batches
   npm run post-now   Post all slots immediately
-  node src/cli.js memory
+  npm run memory     Show source and angle inventory
   npm start          Start agent (cron + dashboard)
       `);
     }

@@ -17,6 +17,7 @@ What it does now:
 - supports owner bootstrap, login, logout, and password change
 - stores sessions, billing state, encrypted secrets, and audit logs in SQLite
 - keeps the existing Reddit -> AI -> queue -> publish engine
+- supports first-class platform drafting and publishing for LinkedIn, Threads, X, Instagram, and Facebook
 - gates automation behind owner auth, billing status, and runtime readiness
 - stores legacy automation state in local JSON files
 
@@ -63,6 +64,7 @@ Automation state:
 - `data/angles.json`
 - `data/used_ids.json`
 - `data/agent.log`
+- `data/platform-state.json`
 
 ### End-to-end flow
 
@@ -90,6 +92,7 @@ Automation state:
 - backend -> third-party APIs:
   - Reddit
   - OpenAI
+  - X API
   - Threads
   - Meta Graph
   - LinkedIn
@@ -195,6 +198,9 @@ Global behavior:
   - `secretPresence`
   - `readiness`
   - `billing`
+- notes:
+  - runtime platform toggles now include `ENABLE_X`
+  - secret presence may include `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, and `X_OAUTH2_ACCESS_TOKEN`
 
 #### `PUT /api/settings/runtime`
 - auth: session + CSRF
@@ -258,6 +264,10 @@ Automation gate means:
   - `readiness`
   - `billing`
   - `config`
+- notes:
+  - `config.platforms` includes `x`
+  - queue items may include `post.x`, `post.ids.x`, and `post.publishErrors.x`
+  - X publish capability can also be tracked locally in `data/platform-state.json` when provider entitlement blocks live posting
 
 #### `GET /api/queue`
 - auth: session
@@ -409,6 +419,10 @@ These still live in JSON-backed store files and are described in `src/types.ts`.
 - first bootstrap creates a live owner account and starts a live trial state
 - Stripe checkout and portal routes require valid Stripe env config
 - readiness can be satisfied by env-backed config even when no secrets are stored in SQLite yet
+- X readiness requires `ENABLE_X=true` plus either:
+  - `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, and `X_ACCESS_TOKEN_SECRET`
+  - or `X_OAUTH2_ACCESS_TOKEN`
+- Even when X auth is valid, live publish can still fail at the provider due to credits or access tier. The runtime can temporarily mark X as draft-only in `data/platform-state.json`.
 
 ## 7. Build-Ready Summary
 
@@ -443,4 +457,3 @@ Legacy automation engine:
 - `src/publish.ts`
 - `src/ai.ts`
 - `src/types.ts`
-

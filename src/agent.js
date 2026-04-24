@@ -84,8 +84,9 @@ async function fireSlot(slot) {
     }
     const enabledLabels = (0, runtime_policy_1.getEnabledPlatformLabels)();
     logger.info(`Firing ${slot.label} — posting to ${enabledLabels.length ? enabledLabels.join(', ') : 'no enabled platforms'}`);
-    const result = await (0, publish_1.publishQueuedItem)(item, logger);
-    (0, content_engine_1.finalizePublishResult)(slot, item, result);
+    const hydratedItem = await (0, content_engine_1.hydrateQueuedItemForActivePlatforms)(slot.id, item, logger);
+    const result = await (0, publish_1.publishQueuedItem)(hydratedItem, logger);
+    (0, content_engine_1.finalizePublishResult)(slot, hydratedItem, result);
     if (result.completed) {
         logger.info(`${slot.label} posted successfully${result.activePlatforms.length ? ` to ${result.activePlatforms.join(', ')}` : ''}`);
     }

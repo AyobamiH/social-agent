@@ -38,20 +38,22 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getActiveDraftPlatforms = getActiveDraftPlatforms;
 exports.extractSourceBank = extractSourceBank;
+exports.draftPlatforms = draftPlatforms;
 exports.draftAngleContent = draftAngleContent;
 const https = __importStar(require("node:https"));
 const BANNED_PHRASES_json_1 = __importDefault(require("../content-os/BANNED_PHRASES.json"));
 const config_1 = __importDefault(require("../config"));
 const store = __importStar(require("./store"));
 const MIN_SCORE = 4;
-const PLATFORM_ORDER = ['linkedin', 'threads', 'instagram', 'facebook'];
+const PLATFORM_ORDER = ['linkedin', 'threads', 'x', 'instagram', 'facebook'];
 const PLATFORM_LABELS = {
     linkedin: 'LinkedIn',
     threads: 'Threads',
+    x: 'X',
     instagram: 'Instagram',
     facebook: 'Facebook',
 };
-const UNIVERSAL_SYSTEM_PROMPT = `You are converting source content into native posts for LinkedIn, Threads, Instagram, and Facebook.
+const UNIVERSAL_SYSTEM_PROMPT = `You are converting source content into native posts for LinkedIn, Threads, X, Instagram, and Facebook.
 
 Do not rewrite line by line.
 
@@ -119,6 +121,19 @@ const PLATFORM_RULES = {
 - No hashtags unless they are genuinely necessary, and keep them minimal
 - First sentence must work on its own`,
     },
+    x: {
+        maxTokens: 220,
+        rules: `Platform: X
+- Goal: one sharp operational observation
+- Tone: conversational, punchy, specific, human
+- Structure: hook, insight, consequence
+- Target length: under 270 characters
+- Hard limit: 280 characters maximum
+- Keep it to one core point only
+- Do not mention Reddit, forums, or source provenance
+- Hashtags are optional; use 0-2 only if they genuinely add value
+- The first clause should make people stop scrolling`,
+    },
     instagram: {
         maxTokens: 320,
         rules: `Platform: Instagram
@@ -149,6 +164,8 @@ function getEnabledDraftPlatforms() {
                 return config_1.default.ENABLE_LINKEDIN;
             case 'threads':
                 return config_1.default.ENABLE_THREADS;
+            case 'x':
+                return config_1.default.ENABLE_X;
             case 'instagram':
                 return config_1.default.ENABLE_INSTAGRAM;
             case 'facebook':
@@ -305,6 +322,9 @@ function needsRevision(platform, draft) {
     if (platform === 'threads' && draft.post.length > 500) {
         issues.push('Threads draft exceeds 500 characters');
     }
+    if (platform === 'x' && draft.post.length > 270) {
+        issues.push('X draft exceeds 270 characters');
+    }
     return issues;
 }
 function formatSourceSummary(summary) {
@@ -342,11 +362,19 @@ function getPlatformText(entry, platform) {
             return entry.linkedin || '';
         case 'threads':
             return entry.threads || '';
+        case 'x':
+            return entry.x || '';
         case 'instagram':
             return entry.instagram || '';
         case 'facebook':
             return entry.facebook || '';
     }
+}
+function capPlatformPost(platform, text) {
+    if (platform !== 'x' || text.length <= 280) {
+        return text;
+    }
+    return text.slice(0, 277).trimEnd() + '...';
 }
 function getOpening(text, words = 10) {
     return text
@@ -641,7 +669,10 @@ Return JSON only in the same shape:
 }`;
         draft = normalizeDraftResponse(angle.label, learningNotes, await chatCompleteJson(UNIVERSAL_SYSTEM_PROMPT, revisionPrompt, rule.maxTokens, 0.6));
     }
-    return draft;
+    return {
+        ...draft,
+        post: capPlatformPost(platform, draft.post),
+    };
 }
 function getActiveDraftPlatforms() {
     return getEnabledDraftPlatforms();
@@ -684,11 +715,12 @@ ${source}
     const parsed = await chatCompleteJson(EXTRACTION_SYSTEM_PROMPT, userPrompt, 900, 0.4);
     return normalizeSourceExtraction(parsed, post);
 }
-async function draftAngleContent(source, summary, angle) {
-    const activePlatforms = getEnabledDraftPlatforms();
+async function draftPlatforms(source, summary, angle, platforms) {
+    const activePlatforms = [...new Set(platforms)];
     const transformed = {
         linkedin: '',
         threads: '',
+        x: '',
         instagram: '',
         facebook: '',
         imageUrl: '',
@@ -704,6 +736,9 @@ async function draftAngleContent(source, summary, angle) {
                 break;
             case 'threads':
                 transformed.threads = draft.post;
+                break;
+            case 'x':
+                transformed.x = draft.post;
                 break;
             case 'instagram':
                 transformed.instagram = draft.post;
@@ -725,4 +760,7 @@ async function draftAngleContent(source, summary, angle) {
         transformed.imagePrompt = image.imagePrompt;
     }
     return transformed;
+}
+async function draftAngleContent(source, summary, angle) {
+    return draftPlatforms(source, summary, angle, getEnabledDraftPlatforms());
 }

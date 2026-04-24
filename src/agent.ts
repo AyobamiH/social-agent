@@ -4,7 +4,7 @@ import config from '../config';
 
 import * as logger from './logger';
 
-import { fillEmptySlots, finalizePublishResult } from './content-engine';
+import { fillEmptySlots, finalizePublishResult, hydrateQueuedItemForActivePlatforms } from './content-engine';
 import { publishQueuedItem } from './publish';
 import { getMemoryStats, getSlotPost } from './store';
 import { getAutomationGate, getEnabledPlatformLabels } from './runtime-policy';
@@ -73,8 +73,9 @@ async function fireSlot(slot: Slot): Promise<void> {
     `Firing ${slot.label} — posting to ${enabledLabels.length ? enabledLabels.join(', ') : 'no enabled platforms'}`
   );
 
-  const result = await publishQueuedItem(item, logger);
-  finalizePublishResult(slot, item, result);
+  const hydratedItem = await hydrateQueuedItemForActivePlatforms(slot.id, item, logger);
+  const result = await publishQueuedItem(hydratedItem, logger);
+  finalizePublishResult(slot, hydratedItem, result);
 
   if (result.completed) {
     logger.info(

@@ -39,6 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.fillEmptySlots = fillEmptySlots;
 exports.finalizePublishResult = finalizePublishResult;
 exports.releaseSlot = releaseSlot;
+exports.hydrateQueuedItemForActivePlatforms = hydrateQueuedItemForActivePlatforms;
 const node_crypto_1 = require("node:crypto");
 const config_1 = __importDefault(require("../config"));
 const ai = __importStar(require("./ai"));
@@ -83,10 +84,64 @@ function buildQueueItem(source, angle, draft) {
         imagePrompt: draft.imagePrompt,
         linkedin: draft.linkedin,
         threads: draft.threads,
+        x: draft.x,
         instagram: draft.instagram,
         facebook: draft.facebook,
         imageUrl: draft.imageUrl,
     };
+}
+function getPlatformText(item, platform) {
+    switch (platform) {
+        case 'linkedin':
+            return item.linkedin;
+        case 'threads':
+            return item.threads;
+        case 'x':
+            return item.x;
+        case 'instagram':
+            return item.instagram;
+        case 'facebook':
+            return item.facebook;
+    }
+}
+function mergeDraftIntoQueueItem(item, draft) {
+    return {
+        ...item,
+        linkedin: draft.linkedin || item.linkedin,
+        threads: draft.threads || item.threads,
+        x: draft.x || item.x,
+        instagram: draft.instagram || item.instagram,
+        facebook: draft.facebook || item.facebook,
+        imageUrl: draft.imageUrl || item.imageUrl,
+        imagePrompt: draft.imagePrompt || item.imagePrompt,
+        draftMeta: {
+            ...(item.draftMeta || {}),
+            ...(draft.draftMeta || {}),
+        },
+        draftedPlatforms: [...new Set([...(item.draftedPlatforms || []), ...draft.draftedPlatforms])],
+    };
+}
+async function hydrateMissingDraftPlatforms(slotId, item, logger) {
+    const activePlatforms = ai.getActiveDraftPlatforms();
+    const missingPlatforms = activePlatforms.filter(platform => !getPlatformText(item, platform)?.trim());
+    if (!missingPlatforms.length) {
+        return item;
+    }
+    if (!item.angleId) {
+        logger.warn(`Skipped draft hydration for ${slotId} because angleId is missing`);
+        return item;
+    }
+    const source = store.getSource(item.redditId);
+    const angle = store.getAngle(item.angleId);
+    if (!source?.summary || !angle) {
+        logger.warn(`Skipped draft hydration for ${slotId} because stored source summary or angle metadata is missing`);
+        return item;
+    }
+    logger.info(`Hydrating ${missingPlatforms.join(', ')} for ${slotId} from ${item.redditId} using angle "${angle.label}"`);
+    const draft = await ai.draftPlatforms(source, source.summary, toAngleCandidate(angle), missingPlatforms);
+    const nextItem = mergeDraftIntoQueueItem(item, draft);
+    store.setSlotPost(slotId, nextItem);
+    return nextItem;
 }
 async function queueAngleIntoSlot(slot, source, angle, logger) {
     if (!source.summary) {
@@ -109,6 +164,18 @@ async function fillEmptySlots(slots, logger) {
         skippedExhausted: 0,
         skippedReserved: 0,
     };
+    for (const slot of slots) {
+        const item = store.getSlotPost(slot.id);
+        if (!item)
+            continue;
+        try {
+            await hydrateMissingDraftPlatforms(slot.id, item, logger);
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            logger.error(`Failed to hydrate missing drafts for ${slot.id}: ${message}`);
+        }
+    }
     const reservedSourceIds = getReservedSourceIds();
     while (true) {
         const slot = getNextOpenSlot(slots);
@@ -207,6 +274,7 @@ function buildHistoryEntry(slot, item, result) {
         imagePrompt: item.imagePrompt,
         linkedin: item.linkedin,
         threads: item.threads,
+        x: item.x,
         instagram: item.instagram,
         facebook: item.facebook,
         imageUrl: item.imageUrl,
@@ -234,4 +302,7 @@ function releaseSlot(slotId) {
     }
     store.clearSlotPost(slotId);
     return item;
+}
+async function hydrateQueuedItemForActivePlatforms(slotId, item, logger) {
+    return hydrateMissingDraftPlatforms(slotId, item, logger);
 }

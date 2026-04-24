@@ -424,6 +424,11 @@ function getRuntimeSecretPresence() {
         OPENAI_API_KEY: Boolean(secrets.OPENAI_API_KEY),
         LINKEDIN_TOKEN: Boolean(secrets.LINKEDIN_TOKEN),
         LINKEDIN_PERSON_URN: Boolean(secrets.LINKEDIN_PERSON_URN),
+        X_API_KEY: Boolean(secrets.X_API_KEY),
+        X_API_SECRET: Boolean(secrets.X_API_SECRET),
+        X_ACCESS_TOKEN: Boolean(secrets.X_ACCESS_TOKEN),
+        X_ACCESS_TOKEN_SECRET: Boolean(secrets.X_ACCESS_TOKEN_SECRET),
+        X_OAUTH2_ACCESS_TOKEN: Boolean(secrets.X_OAUTH2_ACCESS_TOKEN),
         THREADS_ACCESS_TOKEN: Boolean(secrets.THREADS_ACCESS_TOKEN),
         THREADS_USER_ID: Boolean(secrets.THREADS_USER_ID),
         META_ACCESS_TOKEN: Boolean(secrets.META_ACCESS_TOKEN),
@@ -454,6 +459,8 @@ function sanitizeRuntimeSettingsPatch(patch) {
         next.CUSTOM_PROMPT = patch.CUSTOM_PROMPT;
     if (typeof patch.ENABLE_LINKEDIN === 'boolean')
         next.ENABLE_LINKEDIN = patch.ENABLE_LINKEDIN;
+    if (typeof patch.ENABLE_X === 'boolean')
+        next.ENABLE_X = patch.ENABLE_X;
     if (typeof patch.ENABLE_THREADS === 'boolean')
         next.ENABLE_THREADS = patch.ENABLE_THREADS;
     if (typeof patch.ENABLE_INSTAGRAM === 'boolean')

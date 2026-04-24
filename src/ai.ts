@@ -59,16 +59,17 @@ interface PlatformDraft {
 
 const MIN_SCORE = 4;
 
-const PLATFORM_ORDER: PlatformKey[] = ['linkedin', 'threads', 'instagram', 'facebook'];
+const PLATFORM_ORDER: PlatformKey[] = ['linkedin', 'threads', 'x', 'instagram', 'facebook'];
 
 const PLATFORM_LABELS: Record<PlatformKey, string> = {
   linkedin: 'LinkedIn',
   threads: 'Threads',
+  x: 'X',
   instagram: 'Instagram',
   facebook: 'Facebook',
 };
 
-const UNIVERSAL_SYSTEM_PROMPT = `You are converting source content into native posts for LinkedIn, Threads, Instagram, and Facebook.
+const UNIVERSAL_SYSTEM_PROMPT = `You are converting source content into native posts for LinkedIn, Threads, X, Instagram, and Facebook.
 
 Do not rewrite line by line.
 
@@ -138,6 +139,19 @@ const PLATFORM_RULES: Record<PlatformKey, { maxTokens: number; rules: string }> 
 - No hashtags unless they are genuinely necessary, and keep them minimal
 - First sentence must work on its own`,
   },
+  x: {
+    maxTokens: 220,
+    rules: `Platform: X
+- Goal: one sharp operational observation
+- Tone: conversational, punchy, specific, human
+- Structure: hook, insight, consequence
+- Target length: under 270 characters
+- Hard limit: 280 characters maximum
+- Keep it to one core point only
+- Do not mention Reddit, forums, or source provenance
+- Hashtags are optional; use 0-2 only if they genuinely add value
+- The first clause should make people stop scrolling`,
+  },
   instagram: {
     maxTokens: 320,
     rules: `Platform: Instagram
@@ -169,6 +183,8 @@ function getEnabledDraftPlatforms(): PlatformKey[] {
         return config.ENABLE_LINKEDIN;
       case 'threads':
         return config.ENABLE_THREADS;
+      case 'x':
+        return config.ENABLE_X;
       case 'instagram':
         return config.ENABLE_INSTAGRAM;
       case 'facebook':
@@ -351,6 +367,9 @@ function needsRevision(platform: PlatformKey, draft: PlatformDraft): string[] {
   if (platform === 'threads' && draft.post.length > 500) {
     issues.push('Threads draft exceeds 500 characters');
   }
+  if (platform === 'x' && draft.post.length > 270) {
+    issues.push('X draft exceeds 270 characters');
+  }
   return issues;
 }
 
@@ -395,6 +414,7 @@ function getPlatformText(
   entry: {
     linkedin?: string;
     threads?: string;
+    x?: string;
     instagram?: string;
     facebook?: string;
   },
@@ -405,11 +425,21 @@ function getPlatformText(
       return entry.linkedin || '';
     case 'threads':
       return entry.threads || '';
+    case 'x':
+      return entry.x || '';
     case 'instagram':
       return entry.instagram || '';
     case 'facebook':
       return entry.facebook || '';
   }
+}
+
+function capPlatformPost(platform: PlatformKey, text: string): string {
+  if (platform !== 'x' || text.length <= 280) {
+    return text;
+  }
+
+  return text.slice(0, 277).trimEnd() + '...';
 }
 
 function getOpening(text: string, words = 10): string {
@@ -768,7 +798,10 @@ Return JSON only in the same shape:
     );
   }
 
-  return draft;
+  return {
+    ...draft,
+    post: capPlatformPost(platform, draft.post),
+  };
 }
 
 export function getActiveDraftPlatforms(): PlatformKey[] {
@@ -821,15 +854,17 @@ ${source}
   return normalizeSourceExtraction(parsed, post);
 }
 
-export async function draftAngleContent(
+export async function draftPlatforms(
   source: Pick<RedditPost, 'title' | 'selftext'>,
   summary: SourceSummary,
-  angle: AngleCandidate
+  angle: AngleCandidate,
+  platforms: PlatformKey[]
 ): Promise<DraftBundle> {
-  const activePlatforms = getEnabledDraftPlatforms();
+  const activePlatforms = [...new Set(platforms)];
   const transformed: DraftBundle = {
     linkedin: '',
     threads: '',
+    x: '',
     instagram: '',
     facebook: '',
     imageUrl: '',
@@ -849,6 +884,9 @@ export async function draftAngleContent(
         break;
       case 'threads':
         transformed.threads = draft.post;
+        break;
+      case 'x':
+        transformed.x = draft.post;
         break;
       case 'instagram':
         transformed.instagram = draft.post;
@@ -873,4 +911,12 @@ export async function draftAngleContent(
   }
 
   return transformed;
+}
+
+export async function draftAngleContent(
+  source: Pick<RedditPost, 'title' | 'selftext'>,
+  summary: SourceSummary,
+  angle: AngleCandidate
+): Promise<DraftBundle> {
+  return draftPlatforms(source, summary, angle, getEnabledDraftPlatforms());
 }

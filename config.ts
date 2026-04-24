@@ -13,6 +13,7 @@ export interface AppConfig {
   AI_STYLE: string;
   CUSTOM_PROMPT: string;
   ENABLE_LINKEDIN: boolean;
+  ENABLE_X: boolean;
   META_ACCESS_TOKEN: string;
   META_GRAPH_VERSION: string;
   THREADS_GRAPH_VERSION: string;
@@ -21,6 +22,11 @@ export interface AppConfig {
   ENABLE_FACEBOOK: boolean;
   LINKEDIN_TOKEN: string;
   LINKEDIN_PERSON_URN: string;
+  X_API_KEY: string;
+  X_API_SECRET: string;
+  X_ACCESS_TOKEN: string;
+  X_ACCESS_TOKEN_SECRET: string;
+  X_OAUTH2_ACCESS_TOKEN: string;
   THREADS_ACCESS_TOKEN: string;
   THREADS_USER_ID: string;
   FACEBOOK_PAGE_ACCESS_TOKEN: string;
@@ -83,6 +89,7 @@ function buildBaseConfig(): AppConfig {
     AI_STYLE: process.env.AI_STYLE || 'conversational',
     CUSTOM_PROMPT: process.env.CUSTOM_PROMPT || '',
     ENABLE_LINKEDIN: parseBooleanEnv(process.env.ENABLE_LINKEDIN, false),
+    ENABLE_X: parseBooleanEnv(process.env.ENABLE_X, false),
     META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN || '',
     META_GRAPH_VERSION: process.env.META_GRAPH_VERSION || 'v25.0',
     THREADS_GRAPH_VERSION:
@@ -94,6 +101,11 @@ function buildBaseConfig(): AppConfig {
     ENABLE_FACEBOOK: parseBooleanEnv(process.env.ENABLE_FACEBOOK, true),
     LINKEDIN_TOKEN: process.env.LINKEDIN_TOKEN || '',
     LINKEDIN_PERSON_URN: process.env.LINKEDIN_PERSON_URN || '',
+    X_API_KEY: process.env.X_API_KEY || '',
+    X_API_SECRET: process.env.X_API_SECRET || '',
+    X_ACCESS_TOKEN: process.env.X_ACCESS_TOKEN || '',
+    X_ACCESS_TOKEN_SECRET: process.env.X_ACCESS_TOKEN_SECRET || '',
+    X_OAUTH2_ACCESS_TOKEN: process.env.X_OAUTH2_ACCESS_TOKEN || '',
     THREADS_ACCESS_TOKEN:
       process.env.THREADS_ACCESS_TOKEN ||
       process.env.META_ACCESS_TOKEN ||
@@ -132,6 +144,7 @@ export function applyRuntimeConfig(patch: Record<string, unknown>): AppConfig {
   if (typeof patch.AI_STYLE === 'string') config.AI_STYLE = patch.AI_STYLE;
   if (typeof patch.CUSTOM_PROMPT === 'string') config.CUSTOM_PROMPT = patch.CUSTOM_PROMPT;
   if (typeof patch.ENABLE_LINKEDIN === 'boolean') config.ENABLE_LINKEDIN = patch.ENABLE_LINKEDIN;
+  if (typeof patch.ENABLE_X === 'boolean') config.ENABLE_X = patch.ENABLE_X;
   if (typeof patch.META_ACCESS_TOKEN === 'string') config.META_ACCESS_TOKEN = patch.META_ACCESS_TOKEN;
   if (typeof patch.META_GRAPH_VERSION === 'string') config.META_GRAPH_VERSION = patch.META_GRAPH_VERSION;
   if (typeof patch.THREADS_GRAPH_VERSION === 'string') config.THREADS_GRAPH_VERSION = patch.THREADS_GRAPH_VERSION;
@@ -140,6 +153,11 @@ export function applyRuntimeConfig(patch: Record<string, unknown>): AppConfig {
   if (typeof patch.ENABLE_FACEBOOK === 'boolean') config.ENABLE_FACEBOOK = patch.ENABLE_FACEBOOK;
   if (typeof patch.LINKEDIN_TOKEN === 'string') config.LINKEDIN_TOKEN = patch.LINKEDIN_TOKEN;
   if (typeof patch.LINKEDIN_PERSON_URN === 'string') config.LINKEDIN_PERSON_URN = patch.LINKEDIN_PERSON_URN;
+  if (typeof patch.X_API_KEY === 'string') config.X_API_KEY = patch.X_API_KEY;
+  if (typeof patch.X_API_SECRET === 'string') config.X_API_SECRET = patch.X_API_SECRET;
+  if (typeof patch.X_ACCESS_TOKEN === 'string') config.X_ACCESS_TOKEN = patch.X_ACCESS_TOKEN;
+  if (typeof patch.X_ACCESS_TOKEN_SECRET === 'string') config.X_ACCESS_TOKEN_SECRET = patch.X_ACCESS_TOKEN_SECRET;
+  if (typeof patch.X_OAUTH2_ACCESS_TOKEN === 'string') config.X_OAUTH2_ACCESS_TOKEN = patch.X_OAUTH2_ACCESS_TOKEN;
   if (typeof patch.THREADS_ACCESS_TOKEN === 'string') config.THREADS_ACCESS_TOKEN = patch.THREADS_ACCESS_TOKEN;
   if (typeof patch.THREADS_USER_ID === 'string') config.THREADS_USER_ID = patch.THREADS_USER_ID;
   if (typeof patch.FACEBOOK_PAGE_ACCESS_TOKEN === 'string') config.FACEBOOK_PAGE_ACCESS_TOKEN = patch.FACEBOOK_PAGE_ACCESS_TOKEN;

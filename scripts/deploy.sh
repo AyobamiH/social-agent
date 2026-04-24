@@ -10,7 +10,7 @@ echo "→ Restarting with PM2..."
 if pm2 describe social-agent > /dev/null 2>&1; then
   pm2 restart social-agent
 else
-  pm2 start src/agent.js --name social-agent --restart-delay=5000
+  pm2 start npm --name social-agent --restart-delay=5000 -- start
   pm2 save
 fi
 echo "✓ Done."

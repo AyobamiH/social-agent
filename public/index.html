@@ -53,6 +53,7 @@ body::before{
   --radius-xs:10px;
   --linkedin:#0a66c2;
   --threads:#f0f0f5;
+  --x:#9ca3af;
   --instagram:#e1306c;
   --facebook:#1877f2;
 }
@@ -709,6 +710,7 @@ kbd{
 .ghost-pill{color:var(--text-secondary)}
 .platform-badge.linkedin{color:#b4dbff;background:rgba(10,102,194,.12);border-color:rgba(10,102,194,.2)}
 .platform-badge.threads{color:#f6f6fb;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.14)}
+.platform-badge.x{color:#eef2f7;background:rgba(156,163,175,.12);border-color:rgba(156,163,175,.22)}
 .platform-badge.instagram{color:#ffc8da;background:rgba(225,48,108,.12);border-color:rgba(225,48,108,.2)}
 .platform-badge.facebook{color:#cfe2ff;background:rgba(24,119,242,.12);border-color:rgba(24,119,242,.2)}
 .status-badge.pending-review{color:#ffe1aa;background:rgba(245,166,35,.1);border-color:rgba(245,166,35,.18)}
@@ -2321,10 +2323,11 @@ const REPORT_LIBRARY=[
 const STORAGE_KEY='pulse_frontend_state_v3';
 
 const PLATFORM_META={
-  linkedin:{label:'LinkedIn',icon:'in'},
-  threads:{label:'Threads',icon:'th'},
-  instagram:{label:'Instagram',icon:'ig'},
-  facebook:{label:'Facebook',icon:'fb'}
+  linkedin:{label:'LinkedIn',icon:'in',color:'var(--linkedin)'},
+  threads:{label:'Threads',icon:'th',color:'var(--threads)'},
+  x:{label:'X',icon:'x',color:'var(--x)'},
+  instagram:{label:'Instagram',icon:'ig',color:'var(--instagram)'},
+  facebook:{label:'Facebook',icon:'fb',color:'var(--facebook)'}
 };
 
 const MEDIA_MODES=['none','link','image','video'];
@@ -2463,7 +2466,7 @@ function defaultComposer(){
     metadata:'approval_required=true',
     activePreview:'linkedin',
     platformsInitialized:false,
-    platforms:{linkedin:false,threads:false,instagram:false,facebook:false}
+    platforms:{linkedin:false,threads:false,x:false,instagram:false,facebook:false}
   };
 }
 
@@ -2706,9 +2709,9 @@ function openComposer(slotId){
   nextComposer.slotId=slotId || entry?.slot?.id || state.selectedSlotId || 's1';
   if(entry?.post){
     nextComposer.title=entry.post.title || '';
-    nextComposer.core=entry.post.linkedin || entry.post.threads || entry.post.facebook || entry.post.instagram || '';
+    nextComposer.core=entry.post.linkedin || entry.post.threads || entry.post.x || entry.post.facebook || entry.post.instagram || '';
     const platforms=getPostPlatforms(entry.post);
-    nextComposer.platforms={linkedin:false,threads:false,instagram:false,facebook:false};
+    nextComposer.platforms={linkedin:false,threads:false,x:false,instagram:false,facebook:false};
     platforms.forEach(platform=>{ nextComposer.platforms[platform]=true; });
   }
   store.setState(prev=>({
@@ -2952,6 +2955,7 @@ function getTopPosts(){
     draftedPlatforms:entry.post.draftedPlatforms,
     linkedin:entry.post.linkedin,
     threads:entry.post.threads,
+    x:entry.post.x,
     instagram:entry.post.instagram,
     facebook:entry.post.facebook
   }));
@@ -2959,7 +2963,7 @@ function getTopPosts(){
   return pool.slice(0,5).map((entry,index)=>{
     const platforms=Array.isArray(entry.draftedPlatforms) && entry.draftedPlatforms.length ? entry.draftedPlatforms : getPostPlatforms(entry);
     const platform=platforms[0] || 'linkedin';
-    const text=entry[platform] || entry.linkedin || entry.threads || entry.facebook || entry.instagram || '';
+    const text=entry[platform] || entry.linkedin || entry.threads || entry.x || entry.facebook || entry.instagram || '';
     const impressions=28000 + text.length * 18 + index * 3400;
     const rate=(3.2 + (text.length % 24)/10 + index*.4).toFixed(1);
     return {
@@ -2974,7 +2978,7 @@ function getTopPosts(){
 
 function platformMix(){
   const entries=[...getFilledEntries().map(entry=>entry.post),...(store.getState().resources.history || [])];
-  const totals={linkedin:0,threads:0,instagram:0,facebook:0};
+  const totals=Object.fromEntries(Object.keys(PLATFORM_META).map(platform=>[platform,0]));
   entries.forEach(entry=>{
     getPostPlatforms(entry).forEach(platform=>{ totals[platform]+=1; });
   });
@@ -3083,6 +3087,7 @@ function composerVariants(){
     variants:{
       linkedin:`${base}\n\nWhy it matters: keep one operational lesson, one consequence, and one calm point of view.${link ? `\n\n${link}` : ''}${utm}${meta}`,
       threads:`${base}\n\nKeep it sharp, specific, and worth replying to.${link ? `\n\n${link}` : ''}`,
+      x:truncate(`${base}\n\nMake it sharp, specific, and worth replying to.${link ? `\n\n${link}` : ''}`,280),
       instagram:`${base}\n\nLead with the image or clip context, then give the takeaway.${mediaContext}${link ? '\n\nLink in bio or profile CTA.' : ''}`,
       facebook:`${base}\n\nAdd one practical frame so the post lands with broader context.${link ? `\n\n${link}` : ''}${utm}`
     }
@@ -3107,6 +3112,7 @@ function buildManualQueueItem(){
     angleThesis:truncate(composer.core || title,110),
     linkedin:activePlatforms.includes('linkedin') ? derived.variants.linkedin : '',
     threads:activePlatforms.includes('threads') ? derived.variants.threads : '',
+    x:activePlatforms.includes('x') ? derived.variants.x : '',
     instagram:activePlatforms.includes('instagram') ? derived.variants.instagram : '',
     facebook:activePlatforms.includes('facebook') ? derived.variants.facebook : '',
     draftedPlatforms:activePlatforms,
@@ -3211,7 +3217,7 @@ function ensureComposerPlatforms(){
   if(!status) return;
   if(store.getState().composer.platformsInitialized) return;
   const enabled=getEnabledPlatforms(status);
-  const next={linkedin:false,threads:false,instagram:false,facebook:false};
+  const next={linkedin:false,threads:false,x:false,instagram:false,facebook:false};
   enabled.forEach(platform=>{
     next[platform]=true;
   });
@@ -3605,7 +3611,7 @@ function renderDashboard(){
           </div>
           <div class="nav-badge">${posting?'...':esc(entry.post.angleLabel || 'Angle')}</div>
         </div>
-        <div class="surface-note">${esc(truncate(entry.post.angleThesis || entry.post.linkedin || entry.post.threads || entry.post.facebook || entry.post.instagram,150))}</div>
+        <div class="surface-note">${esc(truncate(entry.post.angleThesis || entry.post.linkedin || entry.post.threads || entry.post.x || entry.post.facebook || entry.post.instagram,150))}</div>
       </div>
     `;
   }).join('') : '<div class="empty-state"><strong>No posts scheduled</strong><span>Fill the queue or open the composer to place the first draft.</span><button class="btn btn-secondary" data-action="open-composer">New Post</button></div>';
@@ -3671,7 +3677,7 @@ function renderQueue(){
         <div class="table-mono">${esc(entry.slot.label)}</div>
         <div class="queue-table-title">
           <strong>${esc(post.title || 'Untitled draft')}</strong>
-          <span>${esc(truncate(post.angleThesis || post.linkedin || post.threads || post.facebook || post.instagram,86))}</span>
+          <span>${esc(truncate(post.angleThesis || post.linkedin || post.threads || post.x || post.facebook || post.instagram,86))}</span>
         </div>
         <div><span class="status-badge ${approval}">${esc(approval.replace('-',' '))}</span></div>
         <div class="platform-row">${getPostPlatforms(post).map(platform=>`<span class="platform-badge ${platform}">${PLATFORM_META[platform].icon}</span>`).join('')}</div>
@@ -3722,7 +3728,7 @@ function renderApprovals(){
               <span class="ghost-pill">${esc(entry.slot.label)}</span>
               ${getPostPlatforms(entry.post).map(platform=>`<span class="platform-badge ${platform}">${PLATFORM_META[platform].label}</span>`).join('')}
             </div>
-            <div class="surface-note">${esc(truncate(entry.post.angleThesis || entry.post.linkedin || entry.post.threads || entry.post.facebook || entry.post.instagram,140))}</div>
+            <div class="surface-note">${esc(truncate(entry.post.angleThesis || entry.post.linkedin || entry.post.threads || entry.post.x || entry.post.facebook || entry.post.instagram,140))}</div>
             <div class="presence-row">
               ${TEAM.map(member=>`<span class="presence-pill"><strong>${esc(member.name.split(' ')[0])}</strong>${esc(member.role)}</span>`).join('')}
             </div>
@@ -3768,19 +3774,19 @@ function renderAnalytics(){
 
   const mix=platformMix();
   const total=Math.max(1,Object.values(mix).reduce((sum,value)=>sum+value,0));
-  const percentages={
-    linkedin:Math.round((mix.linkedin / total)*100),
-    threads:Math.round((mix.threads / total)*100),
-    instagram:Math.round((mix.instagram / total)*100),
-    facebook:100 - Math.round((mix.linkedin / total)*100) - Math.round((mix.threads / total)*100) - Math.round((mix.instagram / total)*100)
-  };
+  const platformOrder=Object.keys(PLATFORM_META);
+  let offset=0;
+  const segments=platformOrder.map((platform,index)=>{
+    const remaining=100 - offset;
+    const percentage=index===platformOrder.length-1
+      ? remaining
+      : Math.round(((mix[platform] || 0) / total) * 100);
+    const start=offset;
+    offset=Math.min(100, offset + percentage);
+    return `${PLATFORM_META[platform].color} ${start}% ${offset}%`;
+  });
   els.analyticsDonut.innerHTML=`
-    <div class="donut" style="background:conic-gradient(
-      #0a66c2 0 ${percentages.linkedin}%,
-      #f0f0f5 ${percentages.linkedin}% ${percentages.linkedin + percentages.threads}%,
-      #e1306c ${percentages.linkedin + percentages.threads}% ${percentages.linkedin + percentages.threads + percentages.instagram}%,
-      #1877f2 ${percentages.linkedin + percentages.threads + percentages.instagram}% 100%
-    )">
+    <div class="donut" style="background:conic-gradient(${segments.join(', ')})">
       <div class="donut-center">
         <strong>${total}</strong>
         <span>Tracked items</span>
@@ -3960,6 +3966,7 @@ function renderSettings(){
     <li><span class="detail-key">Enabled platforms</span><span class="detail-value">${esc(enabled.map(platform=>PLATFORM_META[platform].label).join(' · ') || 'None')}</span></li>
     <li><span class="detail-key">LinkedIn</span><span class="detail-value">LINKEDIN_TOKEN + PERSON_URN</span></li>
     <li><span class="detail-key">Threads</span><span class="detail-value">THREADS_ACCESS_TOKEN + USER_ID</span></li>
+    <li><span class="detail-key">X</span><span class="detail-value">${config.platforms.x ? 'User-context auth configured; publish may still depend on X credits/access tier' : 'Text-only v1, currently disabled'}</span></li>
     <li><span class="detail-key">Instagram</span><span class="detail-value">${config.platforms.instagram ? 'Image generation active' : 'Image generation gated off'}</span></li>
     <li><span class="detail-key">Facebook</span><span class="detail-value">META token + group target</span></li>
   `;

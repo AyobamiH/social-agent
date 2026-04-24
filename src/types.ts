@@ -1,5 +1,5 @@
 export type SlotId = 's1' | 's2' | 's3' | 's4';
-export type PlatformKey = 'threads' | 'instagram' | 'linkedin' | 'facebook';
+export type PlatformKey = 'threads' | 'x' | 'instagram' | 'linkedin' | 'facebook';
 export type SourceStatus = 'banked' | 'exhausted';
 export type AngleStatus = 'ready' | 'queued' | 'published' | 'discarded';
 
@@ -65,6 +65,7 @@ export type DraftMetaMap = Partial<Record<PlatformKey, PlatformDraftMeta>>;
 
 export interface TransformedContent {
   threads: string;
+  x: string;
   instagram: string;
   linkedin: string;
   facebook: string;
@@ -79,6 +80,7 @@ export interface DraftBundle extends TransformedContent {
 
 export interface PlatformIds {
   threads?: string;
+  x?: string;
   instagram?: string;
   linkedin?: string;
   facebook?: string;
@@ -86,6 +88,7 @@ export interface PlatformIds {
 
 export interface PublishErrors {
   threads?: string;
+  x?: string;
   instagram?: string;
   linkedin?: string;
   facebook?: string;
@@ -194,6 +197,15 @@ export interface PublishResult {
   skippedPlatforms: PlatformKey[];
   completed: boolean;
 }
+
+export interface PlatformPublishState {
+  publishBlockedUntil?: string;
+  publishBlockedReason?: string;
+  lastFailureAt?: string;
+  lastSuccessAt?: string;
+}
+
+export type PlatformPublishStateMap = Partial<Record<PlatformKey, PlatformPublishState>>;
 
 export interface MemoryStats {
   sources: {

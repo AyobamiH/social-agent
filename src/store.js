@@ -59,6 +59,10 @@ exports.discardAngle = discardAngle;
 exports.markAnglePublished = markAnglePublished;
 exports.reconcileSourceStatus = reconcileSourceStatus;
 exports.getMemoryStats = getMemoryStats;
+exports.getPlatformPublishStates = getPlatformPublishStates;
+exports.getPlatformPublishState = getPlatformPublishState;
+exports.setPlatformPublishBlocked = setPlatformPublishBlocked;
+exports.clearPlatformPublishBlocked = clearPlatformPublishBlocked;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -67,6 +71,7 @@ const USED_FILE = path.join(DATA_DIR, 'used_ids.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const SOURCES_FILE = path.join(DATA_DIR, 'sources.json');
 const ANGLES_FILE = path.join(DATA_DIR, 'angles.json');
+const PLATFORM_STATE_FILE = path.join(DATA_DIR, 'platform-state.json');
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
 }
@@ -424,4 +429,34 @@ function getMemoryStats() {
         },
         legacyUsedIds: getUsedIds().size,
     };
+}
+function getPlatformPublishStates() {
+    return readJSON(PLATFORM_STATE_FILE, {});
+}
+function getPlatformPublishState(platform) {
+    return getPlatformPublishStates()[platform];
+}
+function setPlatformPublishBlocked(platform, reason, blockedUntil) {
+    const states = getPlatformPublishStates();
+    const nextState = {
+        ...(states[platform] || {}),
+        publishBlockedReason: reason,
+        publishBlockedUntil: blockedUntil,
+        lastFailureAt: nowIso(),
+    };
+    states[platform] = nextState;
+    writeJSON(PLATFORM_STATE_FILE, states);
+    return nextState;
+}
+function clearPlatformPublishBlocked(platform) {
+    const states = getPlatformPublishStates();
+    const nextState = {
+        ...(states[platform] || {}),
+        publishBlockedReason: undefined,
+        publishBlockedUntil: undefined,
+        lastSuccessAt: nowIso(),
+    };
+    states[platform] = nextState;
+    writeJSON(PLATFORM_STATE_FILE, states);
+    return nextState;
 }

@@ -12,6 +12,8 @@ function getEnabledPlatformLabels() {
     const labels = [];
     if (config_1.default.ENABLE_THREADS)
         labels.push('Threads');
+    if (config_1.default.ENABLE_X)
+        labels.push('X');
     if (config_1.default.ENABLE_INSTAGRAM)
         labels.push('Instagram');
     if (config_1.default.ENABLE_LINKEDIN)
@@ -23,6 +25,11 @@ function getEnabledPlatformLabels() {
 function getRuntimeReadiness() {
     const missing = [];
     const enabledPlatforms = getEnabledPlatformLabels();
+    const hasXOAuth1 = Boolean(config_1.default.X_API_KEY
+        && config_1.default.X_API_SECRET
+        && config_1.default.X_ACCESS_TOKEN
+        && config_1.default.X_ACCESS_TOKEN_SECRET);
+    const hasXOAuth2 = Boolean(config_1.default.X_OAUTH2_ACCESS_TOKEN);
     if (!config_1.default.OPENAI_API_KEY) {
         missing.push('OPENAI_API_KEY');
     }
@@ -37,6 +44,9 @@ function getRuntimeReadiness() {
     }
     if (config_1.default.ENABLE_THREADS && !config_1.default.THREADS_ACCESS_TOKEN) {
         missing.push('THREADS_ACCESS_TOKEN');
+    }
+    if (config_1.default.ENABLE_X && !hasXOAuth1 && !hasXOAuth2) {
+        missing.push('X_OAUTH2_ACCESS_TOKEN or X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_TOKEN_SECRET');
     }
     if (config_1.default.ENABLE_INSTAGRAM) {
         if (!config_1.default.FACEBOOK_PAGE_ACCESS_TOKEN && !config_1.default.META_ACCESS_TOKEN) {

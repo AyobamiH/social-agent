@@ -41,16 +41,27 @@ exports.publishQueuedItem = publishQueuedItem;
 const facebook = __importStar(require("./facebook"));
 const instagram = __importStar(require("./instagram"));
 const linkedin = __importStar(require("./linkedin"));
+const store = __importStar(require("./store"));
 const threads = __importStar(require("./threads"));
+const x = __importStar(require("./x"));
 const config_1 = __importDefault(require("../config"));
 const PLATFORM_STEPS = [
     { key: 'threads', label: 'Threads', run: item => threads.publish(item.threads) },
+    { key: 'x', label: 'X', run: item => x.publish(item.x) },
     { key: 'instagram', label: 'Instagram', run: item => instagram.publish(item.instagram, item.imageUrl) },
     { key: 'linkedin', label: 'LinkedIn', run: item => linkedin.publish(item.linkedin) },
     { key: 'facebook', label: 'Facebook', run: item => facebook.publish(item.facebook) },
 ];
 exports.PLATFORM_STEPS = PLATFORM_STEPS;
 function getPlatformAvailability(step, item) {
+    const hasXOAuth1 = Boolean(config_1.default.X_API_KEY
+        && config_1.default.X_API_SECRET
+        && config_1.default.X_ACCESS_TOKEN
+        && config_1.default.X_ACCESS_TOKEN_SECRET);
+    const hasXOAuth2 = Boolean(config_1.default.X_OAUTH2_ACCESS_TOKEN);
+    const xPublishState = step.key === 'x' ? store.getPlatformPublishState('x') : undefined;
+    const xPublishBlocked = Boolean(xPublishState?.publishBlockedUntil
+        && Date.parse(xPublishState.publishBlockedUntil) > Date.now());
     switch (step.key) {
         case 'threads':
             if (!config_1.default.ENABLE_THREADS)
@@ -59,6 +70,21 @@ function getPlatformAvailability(step, item) {
                 return { enabled: false, reason: 'THREADS_ACCESS_TOKEN not set' };
             if (!item.threads?.trim())
                 return { enabled: false, reason: 'Threads post text is empty' };
+            return { enabled: true };
+        case 'x':
+            if (!config_1.default.ENABLE_X)
+                return { enabled: false, reason: 'disabled via ENABLE_X=false' };
+            if (!hasXOAuth1 && !hasXOAuth2) {
+                return { enabled: false, reason: 'X auth not set (need OAuth 2.0 token or OAuth 1.0a key/token set)' };
+            }
+            if (xPublishBlocked) {
+                return {
+                    enabled: false,
+                    reason: `draft-only mode until ${xPublishState?.publishBlockedUntil} (${xPublishState?.publishBlockedReason || 'X publish currently blocked'})`,
+                };
+            }
+            if (!item.x?.trim())
+                return { enabled: false, reason: 'X post text is empty' };
             return { enabled: true };
         case 'instagram':
             if (!config_1.default.ENABLE_INSTAGRAM)
@@ -119,11 +145,25 @@ async function publishQueuedItem(item, logger) {
         }
         try {
             const postId = await step.run(nextItem);
+            if (step.key === 'x') {
+                store.clearPlatformPublishBlocked('x');
+            }
             nextItem.ids = { ...(nextItem.ids || {}), [step.key]: postId };
             logger?.info(`[${step.label}] Posted — ID: ${postId}`);
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            if (step.key === 'x' && x.isPublishCapabilityBlockedError(message)) {
+                const blockedUntil = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+                store.setPlatformPublishBlocked('x', message, blockedUntil);
+                const activeIndex = activePlatforms.indexOf(step.key);
+                if (activeIndex >= 0) {
+                    activePlatforms.splice(activeIndex, 1);
+                }
+                skippedPlatforms.push(step.key);
+                logger?.warn(`[${step.label}] Draft-only mode armed — ${message}`);
+                continue;
+            }
             publishErrors[step.key] = message;
             errors.push(`${step.label}: ${message}`);
             logger?.error(`[${step.label}] Failed: ${message}`);
