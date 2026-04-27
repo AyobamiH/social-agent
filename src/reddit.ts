@@ -76,7 +76,7 @@ function request(url: string, redirects = 0): Promise<RedditPost[]> {
 
     const options: http.RequestOptions = {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': `social-agent/1.0 linux content automation by ${config.REDDIT_USER}`,
         'Accept': 'application/json, text/plain, */*',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cache-Control': 'no-cache',

@@ -23,19 +23,38 @@ Current content flow:
 - `src/agent.ts`: cron scheduler and startup checks.
 - `src/cli.ts`: local operations like `fetch`, `queue`, `status`, and `post-now`.
 - `src/server.ts`: dashboard/API server on `GUI_PORT`.
+- `src/automation-service.ts`: shared API/CLI/cron automation service with readiness gates and SQLite locks.
 - `src/content-engine.ts`: shared source-bank / angle-bank / queue orchestration.
 - `src/publish.ts`: shared publish orchestrator. This is the main place to change multi-platform posting behavior.
+- `src/runtime-policy.ts`: runtime readiness checks, platform readiness, and automation gating.
+- `src/control-plane.ts`: single-install users, sessions, MFA/RBAC, billing state, runtime settings/secrets, and audit logs.
+- `src/validators.ts`: API request validation for auth, settings, and queue mutations.
+- `src/cloudinary.ts`: copies temporary remote image URLs to stable Cloudinary delivery URLs.
+- `src/http-client.ts`: shared HTTP helper with timeout/error handling.
 - `src/linkedin.ts`: LinkedIn publisher using the UGC Posts API.
-- `src/x.ts`: X/Twitter publisher using OAuth 1.0a user-context by default and OAuth 2.0 user-context as fallback.
+- `src/x.ts`: X/Twitter publisher using OAuth 1.0a or OAuth 2.0 user-context auth depending on configured credentials.
 - `src/threads.ts`: Threads publisher using `graph.threads.net` `/me/...` endpoints.
 - `src/instagram.ts`: Instagram publisher using Graph API media container + publish flow.
 - `src/facebook.ts`: Facebook Group publisher using Graph API feed posts.
 - `src/test-meta.ts`: Meta diagnostics for identity, Page, Instagram linkage, Group access, and Threads account checks.
-- `src/test-x.ts`: X diagnostics for `/2/users/me` and optional live-post smoke tests.
+- `src/test-x.ts`: X diagnostics for the configured auth mode and optional live-post smoke tests.
 - `src/store.ts`: SQLite-backed queue/history/source/angle/platform-state persistence with one-time legacy JSON import from the `data/` directory.
 - `src/ai.ts`: source extraction, angle drafting, lightweight learning memory, and DALL-E image generation.
 - `src/reddit.ts`: Reddit fetcher for allowed subreddits.
 - `content-os/`: repo-ready prompt pack that defines source extraction, platform rules, quality checks, and banned phrasing.
+
+## Current Architecture Boundary
+
+This codebase is not tenant-aware SaaS yet.
+
+The current backend is a single-install control plane around one automation runtime:
+
+- `APP_DATA_DIR` points to one global runtime data directory.
+- Queue, history, source memory, angle memory, platform state, runtime settings, runtime secrets, and billing state are global for that installation.
+- Control-plane users are owner/operator/viewer accounts for the same installation, not separate SaaS customer tenants.
+- Billing is represented as one access state for the installation, not per tenant or per workspace.
+
+For Social Pulse SaaS, the backend needs either tenant-scoped data/config/secrets/billing throughout the runtime, or a deliberate deployment model where each customer gets an isolated agent/runtime.
 
 ## Important Build Rule
 
@@ -49,23 +68,26 @@ This repo is authored in TypeScript with a split execution model: `tsx` for sour
 
 ## Current Platform State
 
-As of April 24, 2026:
+As of April 27, 2026:
 
 - Threads posting is confirmed working.
 - Instagram posting is confirmed working against the currently accessible Page-linked account.
 - LinkedIn code has been merged from `linkedin-agent-v4`, but this repo has not yet live-posted to LinkedIn.
 - X is implemented as a first-class text-only platform, with live auth verified through OAuth 1.0a user-context.
+- X OAuth 2.0 connect, callback, token persistence, and refresh-token support are implemented in `src/x.ts` and exposed through `/auth/x/start` and `/auth/x/callback`.
 - X live publishing may still be blocked by X credits or access tier even when auth succeeds.
 - Threads now uses its own token path through `THREADS_ACCESS_TOKEN`.
 - Threads uses `/me`, `/me/threads`, and `/me/threads_publish` on `graph.threads.net`.
 - Facebook/Instagram Graph defaults were bumped to `v25.0`.
 - Instagram can now auto-discover the page-linked `instagram_business_account` and derive a Page access token from `FACEBOOK_PAGE_ID` + `META_ACCESS_TOKEN`.
 - Instagram generated images are persisted to Cloudinary when Cloudinary config is present; this avoids expired temporary DALL-E URLs in queued slots.
+- Automation readiness currently requires Cloudinary configuration when Instagram is enabled, even though lower-level image generation can still return the original DALL-E URL if Cloudinary is absent.
 - Queue retry behavior is safe: failed platforms no longer delete queued items.
 - Partial success is supported: one platform can succeed without forcing the whole slot to fail.
 - Source reuse is supported: a Reddit post is only exhausted when no banked angles remain.
 - Draft generation skips disabled platforms to save tokens.
-- Existing queued items can auto-hydrate missing X drafts from stored source and angle memory when X is enabled later.
+- Existing queued items can auto-hydrate missing drafts from stored source and angle memory when a platform is enabled later, including X.
+- CLI commands, API routes, and cron publishing all go through `src/automation-service.ts`, which applies the automation gate and uses SQLite locks.
 
 Current tracked operational mode in `.env.example`:
 
@@ -74,6 +96,8 @@ Current tracked operational mode in `.env.example`:
 - `ENABLE_LINKEDIN=false`
 - `ENABLE_X=false`
 - `ENABLE_FACEBOOK=false`
+
+Important: `config.ts` has fallback defaults that enable Threads, Instagram, and Facebook if no env/runtime setting is present. The tracked `.env.example` pins Facebook off. Keep platform toggles explicit in real deployments.
 
 This was done because:
 
@@ -104,12 +128,16 @@ Do not commit real secrets from `.env`.
 
 ## X Config Notes
 
-- Prefer `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, and `X_ACCESS_TOKEN_SECRET`.
+- Prefer `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, and `X_ACCESS_TOKEN_SECRET` for OAuth 1.0a user-context publishing.
 - `X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_REDIRECT_URI` support the OAuth 2.0 user-context connect flow.
 - `X_OAUTH2_ACCESS_TOKEN` and `X_OAUTH2_REFRESH_TOKEN` are supported for v2 posting after OAuth connect.
 - Do not use app-only bearer tokens or OAuth client secrets for posting.
-- X is text-only in v1.
-- The publisher authenticates with `account/verify_credentials` for OAuth 1.0a checks and attempts publish through the user posting endpoints supported by the configured auth mode.
+- X publishing is text-only.
+- Auth mode priority in `src/x.ts` is OAuth 2.0 refresh-token config, then OAuth 1.0a credentials, then a static OAuth 2.0 access token.
+- The OAuth 1.0a path authenticates with `account/verify_credentials` and posts through `/1.1/statuses/update.json`.
+- The OAuth 2.0 path authenticates with `/2/users/me` and posts through `/2/tweets`.
+- The dashboard owner route `/auth/x/start` begins the OAuth 2.0 flow, and `/auth/x/callback` persists the returned access and refresh tokens into runtime secrets.
+- Queued publishing in `src/publish.ts` only attempts X when OAuth 1.0a credentials or `X_OAUTH2_ACCESS_TOKEN` are present. After OAuth 2.0 connect succeeds, the persisted access token satisfies this requirement.
 - If X returns a credits/access-tier publish entitlement error, the runtime switches X into temporary draft-only mode.
 
 ## Platform Toggles
@@ -127,20 +155,22 @@ Behavior:
 - Disabled platforms are skipped by `src/publish.ts`.
 - A slot is considered complete if every enabled platform succeeds.
 - Disabled platforms do not keep a queue item stuck in retry status.
+- The automation gate in `src/runtime-policy.ts` also requires an owner account, active billing access, core credentials, and readiness for each enabled platform.
 
 ## Commands That Matter
 
-In this workspace, run Node/npm commands inside WSL and load NVM first:
+In this workspace, run Node/npm commands inside the Linux shell and load NVM first:
 
 `source ~/.nvm/nvm.sh && npm run build`
 
-Do not run Windows Node/npm against this WSL checkout; `node_modules` contains Linux-native packages such as `@esbuild/linux-x64`.
+The npm scripts set `TMPDIR`, `TEMP`, and `TMP` to `/tmp` for `tsx` commands so local builds use Linux socket paths.
 
 - `npm run build`: compile TypeScript to `dist/`
 - `npm run typecheck`: TypeScript validation without emitting JS
+- `npm run ci`: typecheck, build, compiled smoke test, and local security regression suite
 - `npm run dev`: start agent (cron + dashboard) from TypeScript through `tsx`
 - `npm run test-meta`: diagnose Meta setup
-- `npm run test-x`: validate X auth and optionally live-post a test update
+- `npm run test-x`: validate the configured X auth mode and optionally live-post a test update
 - `npm run test`: run the local security hardening regression suite
 - `npm run fetch`: fill empty queue slots from Reddit
 - `npm run queue`: inspect queued content and publish IDs/errors
@@ -174,8 +204,10 @@ The repo includes a prompt pack in `content-os/`:
 
 - `data/automation.sqlite`: queue, history, sources, angles, platform-state, and automation locks
 - `data/control-plane.sqlite`: users, sessions, billing, runtime config/secrets, and audit logs
-- `data/queue.json`, `data/used_ids.json`, `data/history.json`, `data/sources.json`, `data/angles.json`: legacy import sources retained as runtime artifacts/backups if present
+- `data/control-plane.key`: generated local encryption key when `APP_ENCRYPTION_KEY` is not provided; production should use `APP_ENCRYPTION_KEY`
+- `data/queue.json`, `data/used_ids.json`, `data/history.json`, `data/sources.json`, `data/angles.json`, `data/platform-state.json`: legacy import sources retained as runtime artifacts/backups if present
 - `data/agent.log`: dashboard log feed
+- `backups/`: default backup output directory for `npm run backup`
 
 These files are runtime state, not source code.
 

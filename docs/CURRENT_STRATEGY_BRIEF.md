@@ -1,6 +1,6 @@
 # Current Strategy Brief
 
-This brief captures the content-memory state imported from the WSL workspace on April 24, 2026.
+This brief captures the content-memory state imported from the Linux workspace on April 24, 2026.
 
 ## Current Editorial Direction
 
@@ -57,7 +57,7 @@ Current imported runtime state:
 - `4` queued angles
 - `0` published angles in the angle-bank flow
 
-Recent operational signals from the WSL workspace:
+Recent operational signals from the Linux workspace:
 - Threads and Instagram are the active publishing path.
 - LinkedIn is implemented in code but not yet live-validated in this repo.
 - Facebook remains blocked by permissions and stays intentionally disabled.
