@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
 import config from '../config';
+import { updateRuntimeSecrets } from './control-plane';
 import { requestJson } from './http-client';
 
 interface XApiErrorDetail {
@@ -42,6 +43,22 @@ interface XStatusUpdateResponse extends XApiErrorResponse {
   text?: string;
 }
 
+export interface XOAuth2TokenSet {
+  accessToken: string;
+  refreshToken?: string;
+  expiresIn?: number;
+  scope?: string;
+  tokenType?: string;
+}
+
+interface XOAuth2TokenResponse extends XApiErrorResponse {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  scope?: string;
+  token_type?: string;
+}
+
 export type XAuthMode = 'oauth1-user' | 'oauth2-user' | 'unconfigured';
 export type XErrorKind = 'publish-access-tier' | 'project-required' | 'auth' | 'other';
 
@@ -63,7 +80,12 @@ function hasOAuth2Config(): boolean {
   return Boolean(config.X_OAUTH2_ACCESS_TOKEN);
 }
 
+function hasOAuth2RefreshConfig(): boolean {
+  return Boolean(config.X_CLIENT_ID && config.X_CLIENT_SECRET && config.X_OAUTH2_REFRESH_TOKEN);
+}
+
 export function getConfiguredAuthMode(): XAuthMode {
+  if (hasOAuth2RefreshConfig()) return 'oauth2-user';
   if (hasOAuth1Config()) return 'oauth1-user';
   if (hasOAuth2Config()) return 'oauth2-user';
   return 'unconfigured';
@@ -82,6 +104,8 @@ export function classifyXError(message: string): XErrorKind {
 
   if (
     normalized.includes('attached to a project')
+    || normalized.includes('attached to an x project')
+    || normalized.includes('not attached to an x project')
     || normalized.includes('associated to a project')
   ) {
     return 'project-required';
@@ -108,6 +132,16 @@ function getOAuth2AccessToken(): string {
     throw new Error('X_OAUTH2_ACCESS_TOKEN not set');
   }
   return config.X_OAUTH2_ACCESS_TOKEN;
+}
+
+function getOAuth2ClientBasicAuth(): string {
+  if (!config.X_CLIENT_ID || !config.X_CLIENT_SECRET) {
+    throw new Error('X_CLIENT_ID and X_CLIENT_SECRET are required for X OAuth 2.0 token exchange');
+  }
+
+  return 'Basic ' + Buffer
+    .from(`${config.X_CLIENT_ID}:${config.X_CLIENT_SECRET}`)
+    .toString('base64');
 }
 
 function getOAuth1Header(method: 'GET' | 'POST', path: string): string {
@@ -180,7 +214,11 @@ function getErrorMessage(payload: XApiErrorResponse, statusCode?: number): strin
   return statusCode ? `HTTP ${statusCode}` : 'Unknown error';
 }
 
-function apiRequest<T>(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>): Promise<T> {
+async function apiRequest<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  body?: Record<string, unknown>
+): Promise<T> {
   const payload = body ? JSON.stringify(body) : undefined;
   const authMode = getConfiguredAuthMode();
 
@@ -188,12 +226,29 @@ function apiRequest<T>(method: 'GET' | 'POST', path: string, body?: Record<strin
     throw new Error('X auth not configured');
   }
 
+  return apiRequestWithAuth<T>(method, path, authMode, payload);
+}
+
+async function apiRequestWithAuth<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  authMode: XAuthMode,
+  payload?: string
+): Promise<T> {
+  if (authMode === 'unconfigured') {
+    throw new Error('X auth not configured');
+  }
+
+  const token = authMode === 'oauth2-user'
+    ? await getUsableOAuth2AccessToken()
+    : undefined;
+
   return requestJson<T & XApiErrorResponse>(`https://api.x.com${path}`, {
     method,
     headers: {
       'Authorization': authMode === 'oauth1-user'
         ? getOAuth1Header(method, path)
-        : `Bearer ${getOAuth2AccessToken()}`,
+        : `Bearer ${token}`,
       ...(payload ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(payload ? { body: payload } : {}),
@@ -204,6 +259,15 @@ function apiRequest<T>(method: 'GET' | 'POST', path: string, body?: Record<strin
     }
     return data;
   });
+}
+
+async function getUsableOAuth2AccessToken(): Promise<string> {
+  if (hasOAuth2RefreshConfig()) {
+    const tokens = await refreshOAuth2AccessToken(config.X_OAUTH2_REFRESH_TOKEN);
+    persistOAuth2Tokens(tokens);
+  }
+
+  return getOAuth2AccessToken();
 }
 
 export async function getAuthenticatedUser(): Promise<{ id: string; username?: string; name?: string }> {
@@ -242,6 +306,14 @@ export async function publish(text: string): Promise<string> {
     throw new Error('X post text exceeds 280 characters');
   }
 
+  if (getConfiguredAuthMode() === 'oauth2-user') {
+    const response = await apiRequest<XPublishResponse>('POST', '/2/tweets', { text: trimmed });
+    if (!response.data?.id) {
+      throw new Error('X API: publish response returned no tweet id');
+    }
+    return response.data.id;
+  }
+
   if (getConfiguredAuthMode() === 'oauth1-user') {
     const response = await apiRequest<XStatusUpdateResponse>(
       'POST',
@@ -254,10 +326,96 @@ export async function publish(text: string): Promise<string> {
     return id;
   }
 
-  const response = await apiRequest<XPublishResponse>('POST', '/2/tweets', { text: trimmed });
-  if (!response.data?.id) {
-    throw new Error('X API: publish response returned no tweet id');
+  throw new Error('X auth not configured');
+}
+
+export function buildOAuth2AuthorizationUrl(state: string, codeChallenge: string, redirectUri = config.X_REDIRECT_URI): string {
+  if (!config.X_CLIENT_ID) {
+    throw new Error('X_CLIENT_ID not set');
   }
 
-  return response.data.id;
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: config.X_CLIENT_ID,
+    redirect_uri: redirectUri,
+    scope: 'tweet.read tweet.write users.read offline.access',
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  });
+
+  return `https://twitter.com/i/oauth2/authorize?${params.toString()}`;
+}
+
+export function createOAuth2PkcePair(): { codeVerifier: string; codeChallenge: string } {
+  const codeVerifier = crypto.randomBytes(64).toString('base64url');
+  const codeChallenge = crypto
+    .createHash('sha256')
+    .update(codeVerifier)
+    .digest('base64url');
+
+  return { codeVerifier, codeChallenge };
+}
+
+export async function exchangeOAuth2Code(
+  code: string,
+  codeVerifier: string,
+  redirectUri = config.X_REDIRECT_URI
+): Promise<XOAuth2TokenSet> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri,
+    code_verifier: codeVerifier,
+  });
+
+  return requestOAuth2Token(body);
+}
+
+export async function refreshOAuth2AccessToken(refreshToken: string): Promise<XOAuth2TokenSet> {
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+  });
+
+  return requestOAuth2Token(body);
+}
+
+async function requestOAuth2Token(body: URLSearchParams): Promise<XOAuth2TokenSet> {
+  const { status, data } = await requestJson<XOAuth2TokenResponse>('https://api.x.com/2/oauth2/token', {
+    method: 'POST',
+    headers: {
+      'Authorization': getOAuth2ClientBasicAuth(),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  });
+
+  if (status >= 400 || data.errors || data.error || data.detail || !data.access_token) {
+    throw new Error('X OAuth2: ' + getErrorMessage(data, status));
+  }
+
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresIn: data.expires_in,
+    scope: data.scope,
+    tokenType: data.token_type,
+  };
+}
+
+export function persistOAuth2Tokens(tokens: XOAuth2TokenSet): void {
+  const patch: Record<string, string> = {
+    X_OAUTH2_ACCESS_TOKEN: tokens.accessToken,
+  };
+
+  config.X_OAUTH2_ACCESS_TOKEN = tokens.accessToken;
+
+  if (tokens.refreshToken) {
+    patch.X_OAUTH2_REFRESH_TOKEN = tokens.refreshToken;
+    config.X_OAUTH2_REFRESH_TOKEN = tokens.refreshToken;
+  }
+
+  updateRuntimeSecrets(patch);
 }

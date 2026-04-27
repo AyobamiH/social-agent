@@ -7,6 +7,7 @@ import config, { reloadRuntimeConfigFromStorage, validateProductionConfig } from
 
 import * as store from './store';
 import * as logger from './logger';
+import * as x from './x';
 
 import {
   assertCsrf,
@@ -111,6 +112,8 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const STRIPE_PRICE_MONTHLY_GBP = process.env.STRIPE_PRICE_MONTHLY_GBP || '';
 const STRIPE_PRICE_YEARLY_GBP = process.env.STRIPE_PRICE_YEARLY_GBP || '';
 
+const pendingXOAuth = new Map<string, { codeVerifier: string; createdAt: number }>();
+
 const SLOTS: Slot[] = [
   { id: 's1', label: '5:00 AM', desc: 'Early risers' },
   { id: 's2', label: '7:00 AM', desc: 'Morning commute' },
@@ -178,6 +181,17 @@ function jsonErr(
   extras?: Record<string, unknown>
 ): void {
   json(res, { error: message, requestId, ...(extras || {}) }, requestId, status, origin);
+}
+
+function html(
+  res: http.ServerResponse,
+  body: string,
+  requestId: string,
+  status = 200
+): void {
+  applySecurityHeaders(res, requestId, 'text/html; charset=utf-8');
+  res.writeHead(status);
+  res.end(body);
 }
 
 function parseCookies(req: http.IncomingMessage): Record<string, string> {
@@ -334,6 +348,7 @@ function getEffectiveSettings(): Record<string, unknown> {
     FACEBOOK_PAGE_ID: config.FACEBOOK_PAGE_ID,
     INSTAGRAM_ACCOUNT_ID: config.INSTAGRAM_ACCOUNT_ID,
     FACEBOOK_GROUP_ID: config.FACEBOOK_GROUP_ID,
+    CLOUDINARY_FOLDER: config.CLOUDINARY_FOLDER,
     TIMEZONE: config.TIMEZONE,
     TRUST_PROXY: config.TRUST_PROXY,
     BOOTSTRAP_MODE: config.BOOTSTRAP_MODE,
@@ -827,6 +842,60 @@ const routes: RouteDef[] = [
         readiness: getRuntimeReadiness(),
         billing: getBillingState(),
       }, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'GET',
+    path: '/auth/x/start',
+    auth: true,
+    roles: ['owner'],
+    handler: (_req, res, context) => {
+      const state = crypto.randomUUID();
+      const { codeVerifier, codeChallenge } = x.createOAuth2PkcePair();
+      pendingXOAuth.set(state, { codeVerifier, createdAt: Date.now() });
+
+      const url = x.buildOAuth2AuthorizationUrl(state, codeChallenge);
+      recordAudit('x.oauth.start', 'x', {}, context.ip, context.user?.id);
+
+      applySecurityHeaders(res, context.requestId);
+      res.writeHead(302, { Location: url });
+      res.end();
+    },
+  },
+  {
+    method: 'GET',
+    path: '/auth/x/callback',
+    handler: async (req, res, context) => {
+      const parsed = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+      const error = parsed.searchParams.get('error');
+      if (error) {
+        badRequest(`X OAuth failed: ${error}`, 'X_OAUTH_ERROR');
+      }
+
+      const code = parsed.searchParams.get('code') || '';
+      const state = parsed.searchParams.get('state') || '';
+      const pending = pendingXOAuth.get(state);
+      pendingXOAuth.delete(state);
+
+      if (!code || !state || !pending) {
+        badRequest('Invalid or expired X OAuth callback state', 'X_OAUTH_STATE_INVALID');
+      }
+
+      if (Date.now() - pending.createdAt > 10 * 60 * 1000) {
+        badRequest('Expired X OAuth callback state', 'X_OAUTH_STATE_EXPIRED');
+      }
+
+      const tokens = await x.exchangeOAuth2Code(code, pending.codeVerifier);
+      x.persistOAuth2Tokens(tokens);
+      reloadRuntimeConfigFromStorage();
+      store.clearPlatformPublishBlocked('x');
+      recordAudit('x.oauth.callback', 'x', { scope: tokens.scope || '' }, context.ip, context.user?.id);
+
+      html(
+        res,
+        '<!doctype html><html><head><title>X connected</title></head><body><h1>X connected</h1><p>You can close this tab and rerun the X live-post test.</p></body></html>',
+        context.requestId
+      );
     },
   },
   {

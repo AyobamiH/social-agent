@@ -218,6 +218,7 @@ export function parseRuntimeSettingsPatch(settings: UnknownRecord): UnknownRecor
   if ('ENABLE_FACEBOOK' in settings) next.ENABLE_FACEBOOK = asBoolean(settings.ENABLE_FACEBOOK, 'settings.ENABLE_FACEBOOK');
   if ('META_GRAPH_VERSION' in settings) next.META_GRAPH_VERSION = asTrimmedString(settings.META_GRAPH_VERSION, 'settings.META_GRAPH_VERSION', { maxLength: 32 });
   if ('THREADS_GRAPH_VERSION' in settings) next.THREADS_GRAPH_VERSION = asTrimmedString(settings.THREADS_GRAPH_VERSION, 'settings.THREADS_GRAPH_VERSION', { maxLength: 32 });
+  if ('CLOUDINARY_FOLDER' in settings) next.CLOUDINARY_FOLDER = asTrimmedString(settings.CLOUDINARY_FOLDER, 'settings.CLOUDINARY_FOLDER', { allowEmpty: true, maxLength: 256 });
   if ('TIMEZONE' in settings) next.TIMEZONE = asTrimmedString(settings.TIMEZONE, 'settings.TIMEZONE', { maxLength: 128 });
 
   return next;

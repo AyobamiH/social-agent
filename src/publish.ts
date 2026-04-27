@@ -1,4 +1,6 @@
 import * as facebook from './facebook';
+import * as ai from './ai';
+import * as cloudinary from './cloudinary';
 import * as instagram from './instagram';
 import * as linkedin from './linkedin';
 import * as store from './store';
@@ -123,6 +125,11 @@ export async function publishQueuedItem(item: QueueItem, logger?: Logger): Promi
     }
 
     try {
+      if (step.key === 'instagram' && cloudinary.isConfigured() && !cloudinary.isCloudinaryUrl(nextItem.imageUrl)) {
+        logger?.info('[Instagram] Refreshing image through Cloudinary before publish');
+        Object.assign(nextItem, await ai.refreshInstagramImage(nextItem));
+      }
+
       const postId = await step.run(nextItem);
       if (step.key === 'x') {
         store.clearPlatformPublishBlocked('x');

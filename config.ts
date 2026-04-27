@@ -37,6 +37,10 @@ export interface AppConfig {
   X_ACCESS_TOKEN: string;
   X_ACCESS_TOKEN_SECRET: string;
   X_OAUTH2_ACCESS_TOKEN: string;
+  X_OAUTH2_REFRESH_TOKEN: string;
+  X_CLIENT_ID: string;
+  X_CLIENT_SECRET: string;
+  X_REDIRECT_URI: string;
   THREADS_ACCESS_TOKEN: string;
   THREADS_USER_ID: string;
   FACEBOOK_PAGE_ACCESS_TOKEN: string;
@@ -44,6 +48,11 @@ export interface AppConfig {
   FACEBOOK_GROUP_ID: string;
   FACEBOOK_USER_ID: string;
   FACEBOOK_PAGE_ID: string;
+  CLOUDINARY_CLOUD_NAME: string;
+  CLOUDINARY_API_KEY: string;
+  CLOUDINARY_API_SECRET: string;
+  CLOUDINARY_UPLOAD_PRESET: string;
+  CLOUDINARY_FOLDER: string;
   TIMEZONE: string;
   GUI_PORT: number;
   TRUST_PROXY: boolean;
@@ -135,6 +144,10 @@ function buildBaseConfig(): AppConfig {
     X_ACCESS_TOKEN: process.env.X_ACCESS_TOKEN || '',
     X_ACCESS_TOKEN_SECRET: process.env.X_ACCESS_TOKEN_SECRET || '',
     X_OAUTH2_ACCESS_TOKEN: process.env.X_OAUTH2_ACCESS_TOKEN || '',
+    X_OAUTH2_REFRESH_TOKEN: process.env.X_OAUTH2_REFRESH_TOKEN || '',
+    X_CLIENT_ID: process.env.X_CLIENT_ID || '',
+    X_CLIENT_SECRET: process.env.X_CLIENT_SECRET || '',
+    X_REDIRECT_URI: process.env.X_REDIRECT_URI || `http://127.0.0.1:${process.env.GUI_PORT || '4001'}/auth/x/callback`,
     THREADS_ACCESS_TOKEN:
       process.env.THREADS_ACCESS_TOKEN ||
       process.env.META_ACCESS_TOKEN ||
@@ -145,6 +158,11 @@ function buildBaseConfig(): AppConfig {
     FACEBOOK_GROUP_ID: process.env.FACEBOOK_GROUP_ID || '',
     FACEBOOK_USER_ID: process.env.FACEBOOK_USER_ID || '',
     FACEBOOK_PAGE_ID: process.env.FACEBOOK_PAGE_ID || '',
+    CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || '',
+    CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || '',
+    CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || '',
+    CLOUDINARY_UPLOAD_PRESET: process.env.CLOUDINARY_UPLOAD_PRESET || '',
+    CLOUDINARY_FOLDER: process.env.CLOUDINARY_FOLDER || 'social-agent/instagram',
     TIMEZONE: process.env.TIMEZONE || 'Europe/London',
     GUI_PORT: Number.parseInt(process.env.GUI_PORT || '4001', 10),
     TRUST_PROXY: parseBooleanEnv(process.env.TRUST_PROXY, false),
@@ -191,6 +209,10 @@ export function applyRuntimeConfig(patch: Record<string, unknown>): AppConfig {
   if (typeof patch.X_ACCESS_TOKEN === 'string') config.X_ACCESS_TOKEN = patch.X_ACCESS_TOKEN;
   if (typeof patch.X_ACCESS_TOKEN_SECRET === 'string') config.X_ACCESS_TOKEN_SECRET = patch.X_ACCESS_TOKEN_SECRET;
   if (typeof patch.X_OAUTH2_ACCESS_TOKEN === 'string') config.X_OAUTH2_ACCESS_TOKEN = patch.X_OAUTH2_ACCESS_TOKEN;
+  if (typeof patch.X_OAUTH2_REFRESH_TOKEN === 'string') config.X_OAUTH2_REFRESH_TOKEN = patch.X_OAUTH2_REFRESH_TOKEN;
+  if (typeof patch.X_CLIENT_ID === 'string') config.X_CLIENT_ID = patch.X_CLIENT_ID;
+  if (typeof patch.X_CLIENT_SECRET === 'string') config.X_CLIENT_SECRET = patch.X_CLIENT_SECRET;
+  if (typeof patch.X_REDIRECT_URI === 'string') config.X_REDIRECT_URI = patch.X_REDIRECT_URI;
   if (typeof patch.THREADS_ACCESS_TOKEN === 'string') config.THREADS_ACCESS_TOKEN = patch.THREADS_ACCESS_TOKEN;
   if (typeof patch.THREADS_USER_ID === 'string') config.THREADS_USER_ID = patch.THREADS_USER_ID;
   if (typeof patch.FACEBOOK_PAGE_ACCESS_TOKEN === 'string') config.FACEBOOK_PAGE_ACCESS_TOKEN = patch.FACEBOOK_PAGE_ACCESS_TOKEN;
@@ -198,6 +220,11 @@ export function applyRuntimeConfig(patch: Record<string, unknown>): AppConfig {
   if (typeof patch.FACEBOOK_GROUP_ID === 'string') config.FACEBOOK_GROUP_ID = patch.FACEBOOK_GROUP_ID;
   if (typeof patch.FACEBOOK_USER_ID === 'string') config.FACEBOOK_USER_ID = patch.FACEBOOK_USER_ID;
   if (typeof patch.FACEBOOK_PAGE_ID === 'string') config.FACEBOOK_PAGE_ID = patch.FACEBOOK_PAGE_ID;
+  if (typeof patch.CLOUDINARY_CLOUD_NAME === 'string') config.CLOUDINARY_CLOUD_NAME = patch.CLOUDINARY_CLOUD_NAME;
+  if (typeof patch.CLOUDINARY_API_KEY === 'string') config.CLOUDINARY_API_KEY = patch.CLOUDINARY_API_KEY;
+  if (typeof patch.CLOUDINARY_API_SECRET === 'string') config.CLOUDINARY_API_SECRET = patch.CLOUDINARY_API_SECRET;
+  if (typeof patch.CLOUDINARY_UPLOAD_PRESET === 'string') config.CLOUDINARY_UPLOAD_PRESET = patch.CLOUDINARY_UPLOAD_PRESET;
+  if (typeof patch.CLOUDINARY_FOLDER === 'string') config.CLOUDINARY_FOLDER = patch.CLOUDINARY_FOLDER;
   if (typeof patch.TIMEZONE === 'string') config.TIMEZONE = patch.TIMEZONE;
   if (typeof patch.APP_DATA_DIR === 'string') config.APP_DATA_DIR = patch.APP_DATA_DIR;
 

@@ -83,11 +83,16 @@ or:
 ```env
 ENABLE_X=true
 X_OAUTH2_ACCESS_TOKEN=...
+X_OAUTH2_REFRESH_TOKEN=...
+X_CLIENT_ID=...
+X_CLIENT_SECRET=...
+X_REDIRECT_URI=http://127.0.0.1:4001/auth/x/callback
 ```
 
 Notes:
 - Preferred path is OAuth 1.0a user-context credentials plus the legacy v1.1 user endpoints.
-- A real OAuth 2.0 user access token is supported as fallback.
+- OAuth 2.0 user-context posting is supported through the dashboard connect flow at `/auth/x/start` when `X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_REDIRECT_URI` are configured.
+- A real OAuth 2.0 user access token is supported as fallback; app-only bearer tokens are not.
 - App-only bearer tokens and OAuth client secrets are not used for posting.
 - Validate the token with `npm run test-x`.
 - Publish a deliberate live smoke test with `npm run test-x -- --live-post`.
@@ -129,7 +134,7 @@ Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 | LinkedIn | Text post | Concrete, professional, operational | None |
 | Threads | Text post | Punchy, direct, conversational | None |
 | X | Text post | Sharp, reply-worthy, under 280 chars | None |
-| Instagram | Caption + image | Visual, clear, save-worthy | DALL-E image when enabled |
+| Instagram | Caption + image | Visual, clear, save-worthy | DALL-E image persisted to Cloudinary when enabled |
 | Facebook | Text post | Conversational with practical framing | None |
 
 ## Commands
@@ -159,7 +164,7 @@ Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 - Draft generation skips disabled platforms to protect token spend.
 - Existing queued items can auto-hydrate missing X drafts from stored source and angle memory when X is enabled later.
 - X can authenticate successfully and still be blocked from posting by X credits or access tier; in that case the runtime falls back to draft-only mode for X.
-- Instagram image generation only runs when Instagram is enabled.
+- Instagram image generation only runs when Instagram is enabled, and generated images are uploaded to Cloudinary so queued posts do not rely on temporary DALL-E URLs.
 - Failed platforms no longer force the whole queue item to disappear.
 - Partial success is supported, so one platform can succeed while another is retained for retry.
 - The API, CLI, and cron now share the same automation gate and SQLite-backed lock layer.

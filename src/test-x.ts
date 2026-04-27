@@ -13,6 +13,12 @@ async function main(): Promise<void> {
   console.log(`X_API_KEY configured: ${config.X_API_KEY ? 'yes' : 'no'}`);
   console.log(`X_ACCESS_TOKEN configured: ${config.X_ACCESS_TOKEN ? 'yes' : 'no'}`);
   console.log(`X_OAUTH2_ACCESS_TOKEN configured: ${config.X_OAUTH2_ACCESS_TOKEN ? 'yes' : 'no'}`);
+  console.log(`X_OAUTH2_REFRESH_TOKEN configured: ${config.X_OAUTH2_REFRESH_TOKEN ? 'yes' : 'no'}`);
+  console.log(`X_CLIENT_ID configured: ${config.X_CLIENT_ID ? 'yes' : 'no'}`);
+
+  if (config.X_CLIENT_ID && config.X_CLIENT_SECRET && !config.X_OAUTH2_REFRESH_TOKEN) {
+    console.log(`\nOAuth 2.0 user connect URL: ${new URL('/auth/x/start', config.X_REDIRECT_URI).toString()}`);
+  }
 
   if (authMode === 'unconfigured') {
     console.log('\nNo supported X auth is configured. Add OAuth 1.0a user credentials or a real OAuth 2.0 user token before testing X.');

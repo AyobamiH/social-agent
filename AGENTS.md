@@ -12,9 +12,10 @@ Current content flow:
 3. Bank each Reddit source into multiple reusable angles.
 4. Draft only one saved angle at a time into enabled platforms.
 5. Generate an Instagram image only when Instagram is enabled.
-6. Save each transformed item into the automation queue store.
-7. Publish only to enabled platforms.
-8. Save publish IDs and history in the automation history store.
+6. Copy generated Instagram images into Cloudinary so queued posts use stable delivery URLs.
+7. Save each transformed item into the automation queue store.
+8. Publish only to enabled platforms.
+9. Save publish IDs and history in the automation history store.
 
 ## Runtime Layout
 
@@ -59,6 +60,7 @@ As of April 24, 2026:
 - Threads uses `/me`, `/me/threads`, and `/me/threads_publish` on `graph.threads.net`.
 - Facebook/Instagram Graph defaults were bumped to `v25.0`.
 - Instagram can now auto-discover the page-linked `instagram_business_account` and derive a Page access token from `FACEBOOK_PAGE_ID` + `META_ACCESS_TOKEN`.
+- Instagram generated images are persisted to Cloudinary when Cloudinary config is present; this avoids expired temporary DALL-E URLs in queued slots.
 - Queue retry behavior is safe: failed platforms no longer delete queued items.
 - Partial success is supported: one platform can succeed without forcing the whole slot to fail.
 - Source reuse is supported: a Reddit post is only exhausted when no banked angles remain.
@@ -103,7 +105,8 @@ Do not commit real secrets from `.env`.
 ## X Config Notes
 
 - Prefer `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, and `X_ACCESS_TOKEN_SECRET`.
-- `X_OAUTH2_ACCESS_TOKEN` is supported as fallback if it is a real OAuth 2.0 user token.
+- `X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_REDIRECT_URI` support the OAuth 2.0 user-context connect flow.
+- `X_OAUTH2_ACCESS_TOKEN` and `X_OAUTH2_REFRESH_TOKEN` are supported for v2 posting after OAuth connect.
 - Do not use app-only bearer tokens or OAuth client secrets for posting.
 - X is text-only in v1.
 - The publisher authenticates with `account/verify_credentials` for OAuth 1.0a checks and attempts publish through the user posting endpoints supported by the configured auth mode.
@@ -126,6 +129,12 @@ Behavior:
 - Disabled platforms do not keep a queue item stuck in retry status.
 
 ## Commands That Matter
+
+In this workspace, run Node/npm commands inside WSL and load NVM first:
+
+`source ~/.nvm/nvm.sh && npm run build`
+
+Do not run Windows Node/npm against this WSL checkout; `node_modules` contains Linux-native packages such as `@esbuild/linux-x64`.
 
 - `npm run build`: compile TypeScript to `dist/`
 - `npm run typecheck`: TypeScript validation without emitting JS
@@ -177,6 +186,7 @@ These files are runtime state, not source code.
 - X posting depends on a valid user-context credential set and sufficient X credits/access tier for the publish endpoint.
 - Facebook Group posting still depends on app/token/group permissions that are not fixed in code.
 - DALL-E image URLs are temporary. If an Instagram slot sits too long before posting, the image URL may expire.
+- Cloudinary should be configured for Instagram queues so DALL-E URLs are copied to a stable delivery URL immediately after generation.
 - Compiled output can go stale if `npm run build` is skipped before `npm start` or `npm run start:pm2`.
 
 ## Good First Checks When Something Breaks

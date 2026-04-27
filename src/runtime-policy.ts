@@ -36,6 +36,11 @@ export function getRuntimeReadiness(): RuntimeReadiness {
     && config.X_ACCESS_TOKEN_SECRET
   );
   const hasXOAuth2 = Boolean(config.X_OAUTH2_ACCESS_TOKEN);
+  const canStartXOAuth2 = Boolean(config.X_CLIENT_ID && config.X_CLIENT_SECRET);
+  const hasCloudinaryAuth = Boolean(
+    config.CLOUDINARY_UPLOAD_PRESET
+    || (config.CLOUDINARY_API_KEY && config.CLOUDINARY_API_SECRET)
+  );
 
   if (!config.OPENAI_API_KEY) {
     missing.push('OPENAI_API_KEY');
@@ -57,8 +62,8 @@ export function getRuntimeReadiness(): RuntimeReadiness {
     missing.push('THREADS_ACCESS_TOKEN');
   }
 
-  if (config.ENABLE_X && !hasXOAuth1 && !hasXOAuth2) {
-    missing.push('X_OAUTH2_ACCESS_TOKEN or X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_TOKEN_SECRET');
+  if (config.ENABLE_X && !hasXOAuth1 && !hasXOAuth2 && !canStartXOAuth2) {
+    missing.push('X OAuth credentials: X_OAUTH2_ACCESS_TOKEN, X_CLIENT_ID/X_CLIENT_SECRET, or X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_TOKEN_SECRET');
   }
 
   if (config.ENABLE_INSTAGRAM) {
@@ -67,6 +72,9 @@ export function getRuntimeReadiness(): RuntimeReadiness {
     }
     if (!config.INSTAGRAM_ACCOUNT_ID && !config.FACEBOOK_PAGE_ID) {
       missing.push('INSTAGRAM_ACCOUNT_ID or FACEBOOK_PAGE_ID');
+    }
+    if (!config.CLOUDINARY_CLOUD_NAME || !hasCloudinaryAuth) {
+      missing.push('CLOUDINARY_CLOUD_NAME plus CLOUDINARY_UPLOAD_PRESET or CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET');
     }
   }
 

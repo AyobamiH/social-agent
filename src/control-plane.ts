@@ -47,6 +47,7 @@ export interface RuntimeSettings {
   ENABLE_FACEBOOK?: boolean;
   META_GRAPH_VERSION?: string;
   THREADS_GRAPH_VERSION?: string;
+  CLOUDINARY_FOLDER?: string;
   TIMEZONE?: string;
 }
 
@@ -59,6 +60,10 @@ export interface RuntimeSecrets {
   X_ACCESS_TOKEN?: string;
   X_ACCESS_TOKEN_SECRET?: string;
   X_OAUTH2_ACCESS_TOKEN?: string;
+  X_OAUTH2_REFRESH_TOKEN?: string;
+  X_CLIENT_ID?: string;
+  X_CLIENT_SECRET?: string;
+  X_REDIRECT_URI?: string;
   THREADS_ACCESS_TOKEN?: string;
   THREADS_USER_ID?: string;
   META_ACCESS_TOKEN?: string;
@@ -67,6 +72,10 @@ export interface RuntimeSecrets {
   FACEBOOK_GROUP_ID?: string;
   FACEBOOK_USER_ID?: string;
   FACEBOOK_PAGE_ID?: string;
+  CLOUDINARY_CLOUD_NAME?: string;
+  CLOUDINARY_API_KEY?: string;
+  CLOUDINARY_API_SECRET?: string;
+  CLOUDINARY_UPLOAD_PRESET?: string;
 }
 
 export interface BillingState {
@@ -1067,6 +1076,10 @@ export function getRuntimeSecretPresence(): Record<keyof RuntimeSecrets, boolean
     X_ACCESS_TOKEN: Boolean(secrets.X_ACCESS_TOKEN),
     X_ACCESS_TOKEN_SECRET: Boolean(secrets.X_ACCESS_TOKEN_SECRET),
     X_OAUTH2_ACCESS_TOKEN: Boolean(secrets.X_OAUTH2_ACCESS_TOKEN),
+    X_OAUTH2_REFRESH_TOKEN: Boolean(secrets.X_OAUTH2_REFRESH_TOKEN),
+    X_CLIENT_ID: Boolean(secrets.X_CLIENT_ID),
+    X_CLIENT_SECRET: Boolean(secrets.X_CLIENT_SECRET),
+    X_REDIRECT_URI: Boolean(secrets.X_REDIRECT_URI),
     THREADS_ACCESS_TOKEN: Boolean(secrets.THREADS_ACCESS_TOKEN),
     THREADS_USER_ID: Boolean(secrets.THREADS_USER_ID),
     META_ACCESS_TOKEN: Boolean(secrets.META_ACCESS_TOKEN),
@@ -1075,6 +1088,10 @@ export function getRuntimeSecretPresence(): Record<keyof RuntimeSecrets, boolean
     FACEBOOK_GROUP_ID: Boolean(secrets.FACEBOOK_GROUP_ID),
     FACEBOOK_USER_ID: Boolean(secrets.FACEBOOK_USER_ID),
     FACEBOOK_PAGE_ID: Boolean(secrets.FACEBOOK_PAGE_ID),
+    CLOUDINARY_CLOUD_NAME: Boolean(secrets.CLOUDINARY_CLOUD_NAME),
+    CLOUDINARY_API_KEY: Boolean(secrets.CLOUDINARY_API_KEY),
+    CLOUDINARY_API_SECRET: Boolean(secrets.CLOUDINARY_API_SECRET),
+    CLOUDINARY_UPLOAD_PRESET: Boolean(secrets.CLOUDINARY_UPLOAD_PRESET),
   };
 }
 
@@ -1099,6 +1116,7 @@ function sanitizeRuntimeSettingsPatch(patch: Partial<RuntimeSettings>): Partial<
   if (typeof patch.ENABLE_FACEBOOK === 'boolean') next.ENABLE_FACEBOOK = patch.ENABLE_FACEBOOK;
   if (typeof patch.META_GRAPH_VERSION === 'string') next.META_GRAPH_VERSION = patch.META_GRAPH_VERSION.trim();
   if (typeof patch.THREADS_GRAPH_VERSION === 'string') next.THREADS_GRAPH_VERSION = patch.THREADS_GRAPH_VERSION.trim();
+  if (typeof patch.CLOUDINARY_FOLDER === 'string') next.CLOUDINARY_FOLDER = patch.CLOUDINARY_FOLDER.trim();
   if (typeof patch.TIMEZONE === 'string') next.TIMEZONE = patch.TIMEZONE.trim();
 
   return next;

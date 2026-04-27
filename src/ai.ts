@@ -2,6 +2,7 @@ import bannedPhrases from '../content-os/BANNED_PHRASES.json';
 import config from '../config';
 
 import * as store from './store';
+import * as cloudinary from './cloudinary';
 import { requestJson } from './http-client';
 
 import type {
@@ -11,6 +12,7 @@ import type {
   DraftQualityScores,
   PlatformDraftMeta,
   PlatformKey,
+  QueueItem,
   RedditPost,
   SourceExtraction,
   SourceSummary,
@@ -621,7 +623,15 @@ async function generateImage(
   angle: AngleCandidate
 ): Promise<{ imagePrompt: string; imageUrl: string }> {
   const imagePrompt = await buildImagePrompt(source, summary, angle);
+  const imageUrl = await generateImageFromPrompt(imagePrompt);
 
+  return {
+    imagePrompt,
+    imageUrl: await persistInstagramImage(imageUrl, imagePrompt, source.title),
+  };
+}
+
+async function generateImageFromPrompt(imagePrompt: string): Promise<string> {
   const body = JSON.stringify({
     model: 'dall-e-3',
     prompt: imagePrompt,
@@ -643,11 +653,48 @@ async function generateImage(
     if (data.error) {
       throw new Error('DALL-E: ' + (data.error.message || 'Unknown error'));
     }
-    return {
-      imagePrompt,
-      imageUrl: data.data?.[0]?.url || '',
-    };
+    return data.data?.[0]?.url || '';
   });
+}
+
+async function persistInstagramImage(
+  imageUrl: string,
+  imagePrompt: string,
+  publicIdHint?: string
+): Promise<string> {
+  if (!imageUrl || cloudinary.isCloudinaryUrl(imageUrl)) {
+    return imageUrl;
+  }
+
+  if (!cloudinary.isConfigured()) {
+    return imageUrl;
+  }
+
+  return cloudinary.uploadRemoteImage(imageUrl, publicIdHint || imagePrompt);
+}
+
+export async function refreshInstagramImage(item: QueueItem): Promise<QueueItem> {
+  if (item.imageUrl && !cloudinary.isCloudinaryUrl(item.imageUrl) && cloudinary.isConfigured()) {
+    try {
+      return {
+        ...item,
+        imageUrl: await cloudinary.uploadRemoteImage(item.imageUrl, item.title),
+      };
+    } catch {
+      // The original DALL-E URL may already be expired; regenerate below from the stored prompt.
+    }
+  }
+
+  if (!item.imagePrompt?.trim()) {
+    throw new Error('Cannot refresh Instagram image because imagePrompt is missing');
+  }
+
+  const imageUrl = await generateImageFromPrompt(item.imagePrompt);
+
+  return {
+    ...item,
+    imageUrl: await persistInstagramImage(imageUrl, item.imagePrompt, item.title),
+  };
 }
 
 async function draftForPlatform(

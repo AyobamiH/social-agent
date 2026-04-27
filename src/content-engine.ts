@@ -316,7 +316,7 @@ export function finalizePublishResult(slot: Slot, item: QueueItem, result: Publi
       store.markAnglePublished(item.angleId);
     }
     store.clearSlotPost(slot.id);
-    store.logHistory(buildHistoryEntry(slot, item, result));
+    store.logHistory(buildHistoryEntry(slot, result.nextItem, result));
     return;
   }
 
