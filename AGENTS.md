@@ -12,9 +12,9 @@ Current content flow:
 3. Bank each Reddit source into multiple reusable angles.
 4. Draft only one saved angle at a time into enabled platforms.
 5. Generate an Instagram image only when Instagram is enabled.
-6. Save each transformed item into a slot in `data/queue.json`.
+6. Save each transformed item into the automation queue store.
 7. Publish only to enabled platforms.
-8. Save publish IDs and history in `data/history.json`.
+8. Save publish IDs and history in the automation history store.
 
 ## Runtime Layout
 
@@ -31,18 +31,20 @@ Current content flow:
 - `src/facebook.ts`: Facebook Group publisher using Graph API feed posts.
 - `src/test-meta.ts`: Meta diagnostics for identity, Page, Instagram linkage, Group access, and Threads account checks.
 - `src/test-x.ts`: X diagnostics for `/2/users/me` and optional live-post smoke tests.
-- `src/store.ts`: queue/history persistence in the `data/` directory.
+- `src/store.ts`: SQLite-backed queue/history/source/angle/platform-state persistence with one-time legacy JSON import from the `data/` directory.
 - `src/ai.ts`: source extraction, angle drafting, lightweight learning memory, and DALL-E image generation.
 - `src/reddit.ts`: Reddit fetcher for allowed subreddits.
 - `content-os/`: repo-ready prompt pack that defines source extraction, platform rules, quality checks, and banned phrasing.
 
 ## Important Build Rule
 
-This repo is authored in TypeScript and the package scripts execute `.ts` entrypoints directly through `tsx`.
+This repo is authored in TypeScript with a split execution model: `tsx` for source-driven dev/operator commands and compiled `dist/` output for the production service runtime.
 
-- Edit `.ts` files, not generated `.js` files.
-- Use the package scripts (`npm start`, `npm run fetch`, `npm run status`, and so on) instead of calling emitted `.js` files directly.
-- Run `npm run build` after TypeScript changes when you need refreshed emitted JS in the repo.
+- Edit `.ts` files, not generated build output.
+- `npm run dev`, `npm run fetch`, `npm run status`, and similar operator commands run from source through `tsx`.
+- `npm run build` emits compiled output into `dist/`.
+- `npm start` and `npm run start:pm2` run the compiled service from `dist/src/agent.js`.
+- The build copies `public/` and `content-os/` into `dist/` for the compiled runtime.
 
 ## Current Platform State
 
@@ -125,17 +127,22 @@ Behavior:
 
 ## Commands That Matter
 
-- `npm run build`: compile TypeScript to runtime JS in place
+- `npm run build`: compile TypeScript to `dist/`
 - `npm run typecheck`: TypeScript validation without emitting JS
+- `npm run dev`: start agent (cron + dashboard) from TypeScript through `tsx`
 - `npm run test-meta`: diagnose Meta setup
 - `npm run test-x`: validate X auth and optionally live-post a test update
+- `npm run test`: run the local security hardening regression suite
 - `npm run fetch`: fill empty queue slots from Reddit
 - `npm run queue`: inspect queued content and publish IDs/errors
 - `npm run status`: show which slots are filled
 - `npm run memory`: inspect source/angle memory counts
 - `npm run history`: inspect recent publish history
 - `npm run post-now`: immediately post every queued slot to enabled platforms
-- `npm start`: start agent (cron + dashboard) through `tsx`
+- `npm run backup`: snapshot `APP_DATA_DIR` into `backups/`
+- `npm run restore -- --from <backup-dir>`: restore a backup into `APP_DATA_DIR`
+- `npm run smoke:dist`: verify the compiled CLI/runtime wiring
+- `npm start`: start compiled agent (cron + dashboard) from `dist/`
 
 ## Content OS
 
@@ -156,13 +163,10 @@ The repo includes a prompt pack in `content-os/`:
 
 ## Data Files
 
-- `data/queue.json`: current slot queue
-- `data/used_ids.json`: dedupe list of Reddit posts already used
-- `data/history.json`: successful and partial publish history plus errors
-- `data/sources.json`: source registry with banked or exhausted status
-- `data/angles.json`: reusable angle bank with ready, queued, and published states
+- `data/automation.sqlite`: queue, history, sources, angles, platform-state, and automation locks
+- `data/control-plane.sqlite`: users, sessions, billing, runtime config/secrets, and audit logs
+- `data/queue.json`, `data/used_ids.json`, `data/history.json`, `data/sources.json`, `data/angles.json`: legacy import sources retained as runtime artifacts/backups if present
 - `data/agent.log`: dashboard log feed
-- `data/platform-state.json`: transient per-platform publish capability state such as X draft-only cooldown windows
 
 These files are runtime state, not source code.
 
@@ -173,7 +177,7 @@ These files are runtime state, not source code.
 - X posting depends on a valid user-context credential set and sufficient X credits/access tier for the publish endpoint.
 - Facebook Group posting still depends on app/token/group permissions that are not fixed in code.
 - DALL-E image URLs are temporary. If an Instagram slot sits too long before posting, the image URL may expire.
-- Emitted runtime JS can drift from TypeScript if `npm run build` is skipped before a workflow that still depends on built files.
+- Compiled output can go stale if `npm run build` is skipped before `npm start` or `npm run start:pm2`.
 
 ## Good First Checks When Something Breaks
 
@@ -182,7 +186,7 @@ These files are runtime state, not source code.
 3. Run `npm run test-x` if X is enabled.
 4. Run `npm run status` to see whether X is in draft-only mode.
 5. Run `npm run queue`.
-6. Inspect `data/history.json`, `data/queue.json`, and `data/platform-state.json`.
+6. Inspect `data/automation.sqlite`, `data/control-plane.sqlite`, and `data/agent.log`.
 7. Confirm `.env` platform toggles match intended behavior.
 
 ## If You Need To Change Publishing Behavior

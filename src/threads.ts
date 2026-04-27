@@ -1,6 +1,5 @@
-import * as https from 'node:https';
-
 import config from '../config';
+import { requestJson } from './http-client';
 
 interface GraphSuccess {
   id: string;
@@ -38,35 +37,24 @@ export async function publish(text: string): Promise<string> {
 }
 
 function apiPost(pathname: string, params: Record<string, string>): Promise<string> {
-  const query = new URLSearchParams(params).toString();
-  const pathWithQuery = `${pathname}?${query}`;
+  const token = params.access_token;
+  const body = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([key]) => key !== 'access_token'))
+  ).toString();
 
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'graph.threads.net',
-      path: pathWithQuery,
-      method: 'POST',
-    }, res => {
-      let data = '';
-      res.on('data', chunk => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data) as GraphErrorResponse;
-          if (json.error) {
-            reject(new Error('Threads API: ' + (json.error.message || 'Unknown error')));
-            return;
-          }
-          resolve((json as GraphSuccess).id);
-        } catch (error) {
-          reject(new Error('Threads parse error: ' + String(error)));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.end();
+  return requestJson<GraphErrorResponse & GraphSuccess>(`https://graph.threads.net${pathname}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  }).then(({ data }) => {
+    if (data.error) {
+      throw new Error('Threads API: ' + (data.error.message || 'Unknown error'));
+    }
+    return data.id;
   });
 }
 

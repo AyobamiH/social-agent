@@ -15,7 +15,7 @@ Maintainer context for humans and coding agents lives in `AGENTS.md`.
 
 ## What changed recently
 
-- The runtime is now TS-first. Package scripts execute `.ts` entrypoints through `tsx`.
+- The runtime is now TS-first with a split model: `tsx` for source-driven dev tooling and compiled `dist/` output for the production service.
 - X is now a first-class platform in the content model, queue, history, API, dashboard, and publish flow.
 - X v1 is text-only and single-post only.
 - The content engine banks source summaries plus reusable angles so one Reddit source can support multiple future posts.
@@ -35,6 +35,7 @@ cd social-agent
 npm install
 cp .env.example .env
 # fill in your credentials
+npm run build
 npm run fetch
 npm run queue
 npm run start:pm2
@@ -44,9 +45,12 @@ pm2 save && pm2 startup
 ## Runtime model
 
 - Author in TypeScript.
-- Run the app through package scripts such as `npm start` and `npm run status`.
-- Do not edit emitted `src/*.js` files by hand.
-- Run `npm run build` when you want refreshed emitted JS in the repo.
+- Use `npm run dev` for source-driven local development through `tsx`.
+- Use `npm run build` to compile the runtime into `dist/`.
+- Use `npm start` or `npm run start:pm2` to run the compiled `dist/` service.
+- Do not edit generated build output by hand.
+- Runtime state now lives primarily in `data/automation.sqlite` and `data/control-plane.sqlite`.
+- The build copies `public/` and `content-os/` into `dist/` so the compiled runtime stays self-contained.
 
 ## Platform setup
 
@@ -133,8 +137,10 @@ Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 | Command | What it does |
 |---|---|
 | `npm run typecheck` | Validate TypeScript without emitting |
-| `npm run build` | Emit runtime JS in place |
-| `npm start` | Start the scheduler and dashboard through `tsx` |
+| `npm run build` | Compile runtime output into `dist/` |
+| `npm run dev` | Start the scheduler and dashboard from TypeScript through `tsx` |
+| `npm start` | Start the compiled scheduler and dashboard from `dist/` |
+| `npm run smoke:dist` | Smoke-test the compiled CLI/runtime wiring |
 | `npm run fetch` | Fill empty queue slots from banked angles or fresh Reddit sources |
 | `npm run queue` | Preview queued drafts for every enabled platform |
 | `npm run status` | Show slot occupancy and memory counts |
@@ -143,7 +149,10 @@ Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 | `npm run post-now` | Publish queued slots immediately |
 | `npm run test-meta` | Diagnose Meta credentials and linked assets |
 | `npm run test-x` | Validate X auth and optionally live-post a test update |
-| `npm run deploy` | Pull latest code, install deps, and restart PM2 |
+| `npm run test` | Run the local security hardening regression suite |
+| `npm run backup` | Snapshot `APP_DATA_DIR` into `backups/` |
+| `npm run restore -- --from <backup-dir>` | Restore a backup into `APP_DATA_DIR` |
+| `npm run deploy -- --ref origin/main` | Backup data, rebuild `dist/`, restart PM2 on `dist/src/agent.js`, and health-check |
 
 ## Operational notes
 
@@ -153,3 +162,4 @@ Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 - Instagram image generation only runs when Instagram is enabled.
 - Failed platforms no longer force the whole queue item to disappear.
 - Partial success is supported, so one platform can succeed while another is retained for retry.
+- The API, CLI, and cron now share the same automation gate and SQLite-backed lock layer.

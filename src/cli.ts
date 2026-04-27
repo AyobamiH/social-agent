@@ -1,8 +1,7 @@
 import * as logger from './logger';
 import * as store from './store';
 
-import { fillEmptySlots, finalizePublishResult, hydrateQueuedItemForActivePlatforms } from './content-engine';
-import { publishQueuedItem } from './publish';
+import { runFetch, runPostAll } from './automation-service';
 
 import type { Slot } from './types';
 
@@ -21,10 +20,10 @@ async function main(): Promise<void> {
       const queue = store.getQueue();
       const memory = store.getMemoryStats();
       const xPublishState = store.getPlatformPublishState('x');
-      console.log('\n── Queue ─────────────────────────');
+      console.log('\n-- Queue -------------------------');
       for (const slot of SLOTS) {
         const item = queue[slot.id];
-        console.log(`  ${slot.label.padEnd(8)} ${item ? '● ' + (item.title || '').substring(0, 50) : '(empty)'}`);
+        console.log(`  ${slot.label.padEnd(8)} ${item ? '* ' + (item.title || '').substring(0, 50) : '(empty)'}`);
       }
       console.log(`\n  Exhausted sources: ${memory.sources.exhausted}`);
       console.log(`  Banked sources:    ${memory.sources.banked}`);
@@ -35,7 +34,7 @@ async function main(): Promise<void> {
       if (xPublishState?.publishBlockedUntil && Date.parse(xPublishState.publishBlockedUntil) > Date.now()) {
         console.log(`  X publish mode:    draft-only until ${xPublishState.publishBlockedUntil}`);
       }
-      console.log('──────────────────────────────────\n');
+      console.log('---------------------------------\n');
       break;
     }
 
@@ -45,8 +44,8 @@ async function main(): Promise<void> {
         const item = queue[slot.id];
         if (!item) continue;
 
-        console.log(`\n┌── ${slot.label} ──────────────────`);
-        console.log(`ANGLE: ${item.angleLabel || 'legacy'}${item.angleThesis ? ` — ${item.angleThesis}` : ''}`);
+        console.log(`\n[${slot.label}]`);
+        console.log(`ANGLE: ${item.angleLabel || 'legacy'}${item.angleThesis ? ` -- ${item.angleThesis}` : ''}`);
         console.log('LINKEDIN:\n' + item.linkedin);
         console.log('THREADS:\n' + item.threads);
         console.log('\nX:\n' + item.x);
@@ -59,7 +58,6 @@ async function main(): Promise<void> {
         if (item.publishErrors && Object.keys(item.publishErrors).length) {
           console.log('\nPUBLISH ERRORS:\n' + JSON.stringify(item.publishErrors, null, 2));
         }
-        console.log('└────────────────────────────────');
       }
       break;
     }
@@ -72,9 +70,9 @@ async function main(): Promise<void> {
       }
 
       for (const entry of history) {
-        console.log(`\n[${entry.postedAt}] ${entry.slot} — ${entry.title || ''}`);
+        console.log(`\n[${entry.postedAt}] ${entry.slot} -- ${entry.title || ''}`);
         if (entry.angleLabel) {
-          console.log(`Angle: ${entry.angleLabel}${entry.angleThesis ? ` — ${entry.angleThesis}` : ''}`);
+          console.log(`Angle: ${entry.angleLabel}${entry.angleThesis ? ` -- ${entry.angleThesis}` : ''}`);
         }
         console.log(
           `LinkedIn: ${entry.ids?.linkedin || 'failed'} | ` +
@@ -92,15 +90,15 @@ async function main(): Promise<void> {
 
     case 'memory': {
       const memory = store.getMemoryStats();
-      console.log('\n── Memory ───────────────────────');
+      console.log('\n-- Memory ------------------------');
       console.log(JSON.stringify(memory, null, 2));
-      console.log('──────────────────────────────────\n');
+      console.log('---------------------------------\n');
       break;
     }
 
     case 'fetch': {
       logger.info('Manual fetch triggered');
-      const stats = await fillEmptySlots(SLOTS, logger);
+      const { stats } = await runFetch(SLOTS, { source: 'cli' }, logger);
       logger.info(
         `Done. filled:${stats.filled} reused:${stats.reusedAngles} extracted:${stats.extractedSources} exhausted:${stats.exhaustedSources}`
       );
@@ -109,26 +107,17 @@ async function main(): Promise<void> {
 
     case 'post-now': {
       logger.info('Manual post-now triggered');
-      for (const slot of SLOTS) {
-        const item = store.getSlotPost(slot.id);
-        if (!item) {
-          logger.warn(`${slot.label} empty`);
+      const { results } = await runPostAll(SLOTS, { source: 'cli' }, logger);
+      for (const result of results) {
+        if (result.skipped) {
+          logger.warn(`${String(result.slot)} empty`);
           continue;
         }
-
-        const hydratedItem = await hydrateQueuedItemForActivePlatforms(slot.id, item, logger);
-        const result = await publishQueuedItem(hydratedItem, logger);
-        finalizePublishResult(slot, hydratedItem, result);
-
-        if (result.completed) {
-          logger.info(
-            `${slot.label} posted | active:${result.activePlatforms.join(',') || 'none'} | ` +
-            `LI:${result.ids.linkedin || '-'} | T:${result.ids.threads || '-'} | X:${result.ids.x || '-'} | ` +
-            `IG:${result.ids.instagram || '-'} | FB:${result.ids.facebook || '-'}`
-          );
-        } else {
-          logger.warn(`${slot.label} retained | pending:${result.pendingPlatforms.join(',')}`);
+        if (result.queuedForRetry) {
+          logger.warn(`${String(result.slot)} retained | pending:${String((result.pendingPlatforms as string[] | undefined)?.join(',') || '')}`);
+          continue;
         }
+        logger.info(`${String(result.slot)} posted`);
       }
       break;
     }
@@ -136,7 +125,7 @@ async function main(): Promise<void> {
     default:
       console.log(`
 Social Agent CLI
-────────────────
+----------------
   npm run fetch      Fill empty slots from banked angles or fresh Reddit sources
   npm run queue      Preview queued content per platform
   npm run status     Show slot fill status and memory counts

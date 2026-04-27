@@ -1,7 +1,6 @@
 import * as crypto from 'node:crypto';
-import * as https from 'node:https';
-
 import config from '../config';
+import { requestJson } from './http-client';
 
 interface XApiErrorDetail {
   message?: string;
@@ -189,42 +188,21 @@ function apiRequest<T>(method: 'GET' | 'POST', path: string, body?: Record<strin
     throw new Error('X auth not configured');
   }
 
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'api.x.com',
-      path,
-      method,
-      headers: {
-        'Authorization': authMode === 'oauth1-user'
-          ? getOAuth1Header(method, path)
-          : `Bearer ${getOAuth2AccessToken()}`,
-        ...(payload ? { 'Content-Type': 'application/json' } : {}),
-        ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
-      },
-    }, res => {
-      let data = '';
-      res.on('data', chunk => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        try {
-          const json = (data ? JSON.parse(data) : {}) as T & XApiErrorResponse;
-          if ((res.statusCode || 500) >= 400 || json.errors || json.error || json.detail) {
-            reject(new Error('X API: ' + getErrorMessage(json, res.statusCode)));
-            return;
-          }
-          resolve(json);
-        } catch (error) {
-          reject(new Error('X parse error: ' + String(error)));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    if (payload) {
-      req.write(payload);
+  return requestJson<T & XApiErrorResponse>(`https://api.x.com${path}`, {
+    method,
+    headers: {
+      'Authorization': authMode === 'oauth1-user'
+        ? getOAuth1Header(method, path)
+        : `Bearer ${getOAuth2AccessToken()}`,
+      ...(payload ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(payload ? { body: payload } : {}),
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  }).then(({ status, data }) => {
+    if (status >= 400 || data.errors || data.error || data.detail) {
+      throw new Error('X API: ' + getErrorMessage(data, status));
     }
-    req.end();
+    return data;
   });
 }
 

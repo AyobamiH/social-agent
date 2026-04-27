@@ -1,6 +1,5 @@
-import * as https from 'node:https';
-
 import config from '../config';
+import { requestJson } from './http-client';
 
 interface LinkedInPublishSuccess {
   id?: string;
@@ -37,44 +36,19 @@ export function publish(text: string): Promise<string> {
     },
   });
 
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'api.linkedin.com',
-      path: '/v2/ugcPosts',
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.LINKEDIN_TOKEN}`,
-        'Content-Type': 'application/json',
-        'X-Restli-Protocol-Version': '2.0.0',
-        'Content-Length': Buffer.byteLength(payload),
-      },
-    }, res => {
-      let data = '';
-      res.on('data', chunk => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        if (res.statusCode === 201) {
-          try {
-            const json = JSON.parse(data) as LinkedInPublishSuccess;
-            resolve(json.id || 'posted');
-          } catch {
-            resolve('posted');
-          }
-          return;
-        }
-
-        try {
-          const json = JSON.parse(data) as LinkedInPublishError;
-          reject(new Error('LinkedIn API: ' + (json.message || `HTTP ${res.statusCode}`)));
-        } catch {
-          reject(new Error(`LinkedIn API: HTTP ${res.statusCode} ${data}`.trim()));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(payload);
-    req.end();
+  return requestJson<LinkedInPublishResponse>('https://api.linkedin.com/v2/ugcPosts', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${config.LINKEDIN_TOKEN}`,
+      'Content-Type': 'application/json',
+      'X-Restli-Protocol-Version': '2.0.0',
+    },
+    body: payload,
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  }).then(({ status, data }) => {
+    if (status === 201) {
+      return data.id || 'posted';
+    }
+    throw new Error('LinkedIn API: ' + (data.message || `HTTP ${status}`));
   });
 }

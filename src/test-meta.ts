@@ -81,8 +81,7 @@ async function main(): Promise<void> {
   const graphVersion = config.META_GRAPH_VERSION;
 
   console.log('\n── Meta Token Test ──────────────────────────────');
-  console.log(`Token length: ${token.length} chars`);
-  console.log(`Token preview: ${token.substring(0, 20)}...${token.substring(token.length - 6)}`);
+  console.log(`Meta token configured: ${token ? 'yes' : 'no'}`);
   console.log(`Threads token present: ${threadsToken ? 'yes' : 'no'}`);
   console.log(`Graph versions: facebook=${graphVersion} threads=/me endpoints`);
 

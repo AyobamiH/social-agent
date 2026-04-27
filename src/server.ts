@@ -3,36 +3,63 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 
-import config, { reloadRuntimeConfigFromStorage } from '../config';
+import config, { reloadRuntimeConfigFromStorage, validateProductionConfig } from '../config';
 
 import * as store from './store';
 import * as logger from './logger';
 
 import {
   assertCsrf,
+  beginMfaEnrollment,
   bootstrapOwner,
   changePassword,
+  createUser,
   destroySession,
+  disableMfa,
+  enableMfa,
   getAuditLogs,
   getBillingState,
   getDbHealth,
+  getMfaStatus,
   getRuntimeSecretPresence,
   getRuntimeSettings,
   getSession,
   getSetupStatus,
+  issueSessionForUser,
+  listUsers,
   login,
+  logoutAllSessions,
   recordAudit,
+  resetUserPassword,
   updateBillingCheckoutState,
   updateBillingFromStripeSubscription,
   updateRuntimeSecrets,
   updateRuntimeSettings,
+  updateUser,
+  verifyMfaSession,
 } from './control-plane';
-import { fillEmptySlots, finalizePublishResult, hydrateQueuedItemForActivePlatforms, releaseSlot } from './content-engine';
-import { publishQueuedItem } from './publish';
+import { runFetch, runPostAll, runPostSlot, runReleaseSlot, runUpdateSlot } from './automation-service';
 import { getAutomationGate, getRuntimeReadiness } from './runtime-policy';
+import {
+  asObject,
+  optionalObject,
+  parseAuthCredentials,
+  parseCheckoutInterval,
+  parsePasswordChange,
+  parseSettingsPayload,
+  parseRuntimeSettingsPatch,
+  parseSecretsPayload,
+  parseSlotId,
+  parseSlotUpdates,
+  parseTotp,
+  parseUserCreate,
+  parseUserPasswordReset,
+  parseUserUpdate,
+} from './validators';
+import { HttpError, badRequest, conflict, forbidden, isHttpError, notFound, unauthorized } from './errors';
 
 import type { QueueItem, Slot } from './types';
-import type { AuthUser, SessionUser } from './control-plane';
+import type { AppRole, AuthUser, SessionUser } from './control-plane';
 
 type RequestBody = Record<string, unknown>;
 type RouteHandler = (
@@ -42,6 +69,7 @@ type RouteHandler = (
 ) => void | Promise<void>;
 
 interface RequestContext {
+  requestId: string;
   body: RequestBody;
   rawBody: string;
   cookies: Record<string, string>;
@@ -55,8 +83,10 @@ interface RouteDef {
   method: string;
   path: string;
   auth?: boolean;
+  roles?: AppRole[];
   csrf?: boolean;
   billing?: 'automation';
+  allowPendingMfa?: boolean;
   handler: RouteHandler;
 }
 
@@ -88,31 +118,66 @@ const SLOTS: Slot[] = [
   { id: 's4', label: '3:00 PM', desc: 'Afternoon peak' },
 ];
 
+let activeServer: http.Server | undefined;
+
+function getRuntimeRoot(): string {
+  return path.resolve(__dirname, '..');
+}
+
+function getProjectRoot(): string {
+  const runtimeRoot = getRuntimeRoot();
+  return path.basename(runtimeRoot) === 'dist'
+    ? path.resolve(runtimeRoot, '..')
+    : runtimeRoot;
+}
+
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === '') return fallback;
   return /^(1|true|yes|on)$/i.test(value.trim());
 }
 
-function json(res: http.ServerResponse, data: unknown, status = 200, origin?: string): void {
+function applySecurityHeaders(
+  res: http.ServerResponse,
+  requestId: string,
+  contentType?: string
+): void {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Permissions-Policy', 'interest-cohort=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('X-Request-Id', requestId);
+  if (COOKIE_SECURE) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  if (contentType) {
+    res.setHeader('Content-Type', contentType);
+  }
+}
+
+function json(
+  res: http.ServerResponse,
+  data: unknown,
+  requestId: string,
+  status = 200,
+  origin?: string
+): void {
   applyCorsHeaders(res, origin);
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Cache-Control': 'no-store',
-    'Referrer-Policy': 'no-referrer',
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-  });
+  applySecurityHeaders(res, requestId, 'application/json');
+  res.writeHead(status);
   res.end(JSON.stringify(data));
 }
 
 function jsonErr(
   res: http.ServerResponse,
+  requestId: string,
   message: string,
   status = 500,
   origin?: string,
   extras?: Record<string, unknown>
 ): void {
-  json(res, { error: message, ...(extras || {}) }, status, origin);
+  json(res, { error: message, requestId, ...(extras || {}) }, requestId, status, origin);
 }
 
 function parseCookies(req: http.IncomingMessage): Record<string, string> {
@@ -181,15 +246,29 @@ function clearSessionCookie(): string {
   return parts.join('; ');
 }
 
+function isLoopbackIp(ip: string | undefined): boolean {
+  if (!ip) return false;
+  return ip === '127.0.0.1'
+    || ip === '::1'
+    || ip === '::ffff:127.0.0.1'
+    || ip === 'localhost';
+}
+
 function getClientIp(req: http.IncomingMessage): string | undefined {
   const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.trim()) {
+  if (config.TRUST_PROXY && typeof forwarded === 'string' && forwarded.trim()) {
     return forwarded.split(',')[0].trim();
   }
   return req.socket.remoteAddress || undefined;
 }
 
 function readBody(req: http.IncomingMessage): Promise<{ rawBody: string; body: RequestBody }> {
+  const contentType = String(req.headers['content-type'] || '');
+  const expectsJson = !contentType || /application\/json|text\/plain/i.test(contentType);
+  if (!expectsJson) {
+    throw new HttpError(415, 'Unsupported content type', { code: 'UNSUPPORTED_CONTENT_TYPE' });
+  }
+
   return new Promise((resolve, reject) => {
     let rawBody = '';
     let size = 0;
@@ -197,7 +276,7 @@ function readBody(req: http.IncomingMessage): Promise<{ rawBody: string; body: R
     req.on('data', chunk => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
-        reject(new Error('Request body too large'));
+        reject(new HttpError(413, 'Request body too large', { code: 'REQUEST_TOO_LARGE' }));
         req.destroy();
         return;
       }
@@ -213,7 +292,7 @@ function readBody(req: http.IncomingMessage): Promise<{ rawBody: string; body: R
       try {
         resolve({ rawBody, body: JSON.parse(rawBody) as RequestBody });
       } catch {
-        reject(new Error('Invalid JSON body'));
+        reject(new HttpError(400, 'Invalid JSON body', { code: 'INVALID_JSON' }));
       }
     });
 
@@ -228,13 +307,6 @@ function getSessionCookieMaxAge(expiresAt: string): number {
   }
 
   return Math.max(0, Math.floor((expiresAtMs - Date.now()) / 1000));
-}
-
-function getErrorStatus(error: unknown): number {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message === 'Invalid JSON body') return 400;
-  if (message === 'Request body too large') return 413;
-  return 500;
 }
 
 function getSlot(slotId: unknown): Slot | undefined {
@@ -263,6 +335,8 @@ function getEffectiveSettings(): Record<string, unknown> {
     INSTAGRAM_ACCOUNT_ID: config.INSTAGRAM_ACCOUNT_ID,
     FACEBOOK_GROUP_ID: config.FACEBOOK_GROUP_ID,
     TIMEZONE: config.TIMEZONE,
+    TRUST_PROXY: config.TRUST_PROXY,
+    BOOTSTRAP_MODE: config.BOOTSTRAP_MODE,
   };
 }
 
@@ -283,7 +357,7 @@ async function stripeFormPost(
   params: Record<string, string>
 ): Promise<Record<string, unknown>> {
   if (!STRIPE_SECRET_KEY) {
-    throw new Error('STRIPE_SECRET_KEY is not configured');
+    throw new HttpError(503, 'Billing is not configured', { code: 'STRIPE_NOT_CONFIGURED' });
   }
 
   const body = new URLSearchParams();
@@ -298,29 +372,33 @@ async function stripeFormPost(
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body,
+    signal: AbortSignal.timeout(config.HTTP_TIMEOUT_MS),
   });
 
   const payload = await response.json() as Record<string, unknown>;
   if (!response.ok) {
-    const errorMessage = typeof payload.error === 'object' && payload.error && 'message' in payload.error
-      ? String((payload.error as { message?: string }).message || 'Stripe request failed')
-      : 'Stripe request failed';
-    throw new Error(errorMessage);
+    throw new HttpError(502, 'Stripe request failed', {
+      code: 'STRIPE_REQUEST_FAILED',
+      details: {
+        status: response.status,
+      },
+      expose: false,
+    });
   }
 
   return payload;
 }
 
-function getSubscriptionPriceId(interval: unknown): string {
+function getSubscriptionPriceId(interval: 'monthly' | 'yearly'): string {
   if (interval === 'yearly') {
     if (!STRIPE_PRICE_YEARLY_GBP) {
-      throw new Error('STRIPE_PRICE_YEARLY_GBP is not configured');
+      throw new HttpError(503, 'Billing is not configured', { code: 'STRIPE_PRICE_NOT_CONFIGURED' });
     }
     return STRIPE_PRICE_YEARLY_GBP;
   }
 
   if (!STRIPE_PRICE_MONTHLY_GBP) {
-    throw new Error('STRIPE_PRICE_MONTHLY_GBP is not configured');
+    throw new HttpError(503, 'Billing is not configured', { code: 'STRIPE_PRICE_NOT_CONFIGURED' });
   }
   return STRIPE_PRICE_MONTHLY_GBP;
 }
@@ -338,7 +416,7 @@ async function ensureStripeCustomer(user: AuthUser): Promise<string> {
 
   const customerId = String(customer.id || '');
   if (!customerId) {
-    throw new Error('Stripe did not return a customer id');
+    throw new HttpError(502, 'Stripe request failed', { code: 'STRIPE_CUSTOMER_MISSING', expose: false });
   }
 
   updateBillingCheckoutState({ stripeCustomerId: customerId });
@@ -382,6 +460,78 @@ function verifyStripeSignature(rawBody: string, signatureHeader: string | undefi
   ));
 }
 
+function parseStripeEvent(rawBody: string): Record<string, unknown> {
+  try {
+    return JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function assertBootstrapAllowed(req: http.IncomingMessage, ip: string | undefined): void {
+  const setup = getSetupStatus();
+  if (setup.hasOwner) {
+    conflict('Owner account already exists', 'OWNER_EXISTS');
+  }
+
+  if (config.BOOTSTRAP_MODE === 'disabled') {
+    notFound();
+  }
+
+  if (config.BOOTSTRAP_MODE === 'localhost' && !isLoopbackIp(ip)) {
+    forbidden('Bootstrap is restricted', 'BOOTSTRAP_FORBIDDEN');
+  }
+
+  if (config.BOOTSTRAP_MODE === 'token') {
+    const header = req.headers['x-bootstrap-token'];
+    const token = Array.isArray(header) ? header[0] : header;
+    if (!token || token !== config.BOOTSTRAP_TOKEN) {
+      forbidden('Bootstrap token required', 'BOOTSTRAP_TOKEN_REQUIRED');
+    }
+  }
+}
+
+function mapInternalError(error: unknown): HttpError {
+  if (isHttpError(error)) {
+    return error;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === 'Invalid JSON body') {
+    return new HttpError(400, message, { code: 'INVALID_JSON' });
+  }
+  if (message === 'Request body too large') {
+    return new HttpError(413, message, { code: 'REQUEST_TOO_LARGE' });
+  }
+
+  return new HttpError(500, 'Internal server error', {
+    code: 'INTERNAL_SERVER_ERROR',
+    expose: false,
+  });
+}
+
+function logRequest(
+  context: RequestContext,
+  method: string,
+  pathname: string,
+  status: number,
+  startedAt: number,
+  extras?: Record<string, unknown>
+): void {
+  logger.info('request', {
+    type: 'request',
+    requestId: context.requestId,
+    method,
+    pathname,
+    status,
+    durationMs: Date.now() - startedAt,
+    userId: context.user?.id,
+    role: context.user?.role,
+    ip: context.ip,
+    ...extras,
+  });
+}
+
 const routes: RouteDef[] = [
   {
     method: 'GET',
@@ -390,87 +540,181 @@ const routes: RouteDef[] = [
       json(res, {
         ok: true,
         time: new Date().toISOString(),
+      }, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'GET',
+    path: '/api/health/readiness',
+    auth: true,
+    roles: ['owner'],
+    handler: (_req, res, context) => {
+      json(res, {
+        ok: true,
+        time: new Date().toISOString(),
         db: getDbHealth(),
         setup: getSetupStatus(),
         readiness: getRuntimeReadiness(),
         automation: getAutomationGate(),
-      }, 200, context.origin);
+        stripe: getStripeConfigSummary(),
+        productionConfigIssues: validateProductionConfig(),
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/bootstrap/status',
     handler: (_req, res, context) => {
-      json(res, {
-        setup: getSetupStatus(),
-        readiness: getRuntimeReadiness(),
-        automation: getAutomationGate(),
-        stripe: getStripeConfigSummary(),
-      }, 200, context.origin);
+      const setup = getSetupStatus();
+      if (setup.hasOwner) {
+        json(res, { initialized: true }, context.requestId, 200, context.origin);
+        return;
+      }
+
+      json(res, { initialized: false }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/auth/me',
+    allowPendingMfa: true,
     handler: (_req, res, context) => {
       if (!context.session) {
         json(res, {
           authenticated: false,
-          setup: getSetupStatus(),
-          stripe: getStripeConfigSummary(),
-        }, 200, context.origin);
+          initialized: getSetupStatus().hasOwner,
+        }, context.requestId, 200, context.origin);
         return;
       }
 
       json(res, {
-        authenticated: true,
+        authenticated: context.session.mfaVerified,
+        mfaPending: !context.session.mfaVerified,
         user: context.session.user,
         csrfToken: context.session.csrfToken,
+        mfa: getMfaStatus(context.session.user.id),
         billing: getBillingState(),
         readiness: getRuntimeReadiness(),
-        stripe: getStripeConfigSummary(),
-      }, 200, context.origin);
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'POST',
     path: '/api/auth/bootstrap',
-    handler: (_req, res, context) => {
-      if (getSetupStatus().hasOwner) {
-        jsonErr(res, 'Owner account already exists', 409, context.origin);
-        return;
-      }
-
-      const email = typeof context.body.email === 'string' ? context.body.email : '';
-      const password = typeof context.body.password === 'string' ? context.body.password : '';
-      const session = bootstrapOwner(email, password, String(_req.headers['user-agent'] || ''), context.ip);
+    handler: (req, res, context) => {
+      assertBootstrapAllowed(req, context.ip);
+      const credentials = parseAuthCredentials(context.body);
+      const session = bootstrapOwner(credentials.email, credentials.password, String(req.headers['user-agent'] || ''), context.ip);
 
       res.setHeader('Set-Cookie', buildSessionCookie(session.token, getSessionCookieMaxAge(session.expiresAt)));
       json(res, {
         authenticated: true,
         user: session.user,
         csrfToken: session.csrfToken,
+        mfa: getMfaStatus(session.user.id),
         billing: getBillingState(),
         readiness: getRuntimeReadiness(),
-      }, 201, context.origin);
+      }, context.requestId, 201, context.origin);
     },
   },
   {
     method: 'POST',
     path: '/api/auth/login',
-    handler: (_req, res, context) => {
-      const email = typeof context.body.email === 'string' ? context.body.email : '';
-      const password = typeof context.body.password === 'string' ? context.body.password : '';
-      const session = login(email, password, String(_req.headers['user-agent'] || ''), context.ip);
+    handler: (req, res, context) => {
+      const credentials = parseAuthCredentials(context.body);
+      const session = login(credentials.email, credentials.password, String(req.headers['user-agent'] || ''), context.ip);
 
       res.setHeader('Set-Cookie', buildSessionCookie(session.token, getSessionCookieMaxAge(session.expiresAt)));
       json(res, {
-        authenticated: true,
+        authenticated: session.mfaVerified,
+        mfaPending: !session.mfaVerified,
         user: session.user,
         csrfToken: session.csrfToken,
+        mfa: getMfaStatus(session.user.id),
+        billing: session.mfaVerified ? getBillingState() : undefined,
+        readiness: session.mfaVerified ? getRuntimeReadiness() : undefined,
+      }, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/mfa/setup',
+    auth: true,
+    csrf: true,
+    allowPendingMfa: true,
+    handler: (_req, res, context) => {
+      const enrollment = beginMfaEnrollment(context.user!.id);
+      recordAudit('auth.mfa.setup', 'user', {}, context.ip, context.user?.id);
+      json(res, enrollment, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/mfa/enable',
+    auth: true,
+    csrf: true,
+    allowPendingMfa: true,
+    handler: (req, res, context) => {
+      const { otp } = parseTotp(context.body);
+      enableMfa(context.user!.id, otp);
+      const nextSession = issueSessionForUser(context.user!.id, String(req.headers['user-agent'] || ''), context.ip, {
+        revokeExisting: true,
+        mfaVerified: true,
+      });
+      res.setHeader('Set-Cookie', buildSessionCookie(nextSession.token, getSessionCookieMaxAge(nextSession.expiresAt)));
+      recordAudit('auth.mfa.enabled', 'user', {}, context.ip, context.user?.id);
+      json(res, {
+        authenticated: true,
+        user: nextSession.user,
+        csrfToken: nextSession.csrfToken,
+        mfa: getMfaStatus(nextSession.user.id),
+      }, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/mfa/verify',
+    auth: true,
+    csrf: true,
+    allowPendingMfa: true,
+    handler: (req, res, context) => {
+      const { otp } = parseTotp(context.body);
+      const nextSession = verifyMfaSession(context.cookies[SESSION_COOKIE_NAME], otp, String(req.headers['user-agent'] || ''), context.ip);
+      res.setHeader('Set-Cookie', buildSessionCookie(nextSession.token, getSessionCookieMaxAge(nextSession.expiresAt)));
+      recordAudit('auth.mfa.verified', 'user', {}, context.ip, context.user?.id);
+      json(res, {
+        authenticated: true,
+        user: nextSession.user,
+        csrfToken: nextSession.csrfToken,
+        mfa: getMfaStatus(nextSession.user.id),
         billing: getBillingState(),
         readiness: getRuntimeReadiness(),
-      }, 200, context.origin);
+      }, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/mfa/disable',
+    auth: true,
+    csrf: true,
+    allowPendingMfa: true,
+    handler: (_req, res, context) => {
+      const body = asObject(context.body, 'body');
+      const currentPassword = String(body.currentPassword || '');
+      const otp = typeof body.otp === 'string' ? body.otp.trim() : undefined;
+      disableMfa(context.user!.id, currentPassword, otp);
+      res.setHeader('Set-Cookie', clearSessionCookie());
+      recordAudit('auth.mfa.disabled', 'user', {}, context.ip, context.user?.id);
+      json(res, { success: true, reauthenticate: true }, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'GET',
+    path: '/api/auth/mfa/status',
+    auth: true,
+    allowPendingMfa: true,
+    handler: (_req, res, context) => {
+      json(res, getMfaStatus(context.user!.id), context.requestId, 200, context.origin);
     },
   },
   {
@@ -478,11 +722,25 @@ const routes: RouteDef[] = [
     path: '/api/auth/logout',
     auth: true,
     csrf: true,
+    allowPendingMfa: true,
     handler: (_req, res, context) => {
       destroySession(context.cookies[SESSION_COOKIE_NAME]);
       res.setHeader('Set-Cookie', clearSessionCookie());
       recordAudit('auth.logout', 'session', {}, context.ip, context.user?.id);
-      json(res, { success: true }, 200, context.origin);
+      json(res, { success: true }, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/logout-all',
+    auth: true,
+    csrf: true,
+    allowPendingMfa: true,
+    handler: (_req, res, context) => {
+      logoutAllSessions(context.user!.id);
+      res.setHeader('Set-Cookie', clearSessionCookie());
+      recordAudit('auth.logout_all', 'session', {}, context.ip, context.user?.id);
+      json(res, { success: true }, context.requestId, 200, context.origin);
     },
   },
   {
@@ -491,17 +749,76 @@ const routes: RouteDef[] = [
     auth: true,
     csrf: true,
     handler: (_req, res, context) => {
-      const currentPassword = typeof context.body.currentPassword === 'string' ? context.body.currentPassword : '';
-      const nextPassword = typeof context.body.nextPassword === 'string' ? context.body.nextPassword : '';
-      changePassword(context.user!.id, currentPassword, nextPassword);
+      const body = asObject(context.body, 'body');
+      const payload = parsePasswordChange(body);
+      changePassword(context.user!.id, payload.currentPassword, payload.nextPassword);
+      res.setHeader('Set-Cookie', clearSessionCookie());
       recordAudit('auth.password.change', 'user', {}, context.ip, context.user?.id);
-      json(res, { success: true }, 200, context.origin);
+      json(res, { success: true, reauthenticate: true }, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'GET',
+    path: '/api/users',
+    auth: true,
+    roles: ['owner'],
+    handler: (_req, res, context) => {
+      json(res, listUsers(), context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/users',
+    auth: true,
+    roles: ['owner'],
+    csrf: true,
+    handler: (_req, res, context) => {
+      const body = asObject(context.body, 'body');
+      const payload = parseUserCreate(body);
+      const user = createUser(payload.email, payload.password, payload.role);
+      recordAudit('users.create', 'user', { userId: user.id, role: user.role }, context.ip, context.user?.id);
+      json(res, user, context.requestId, 201, context.origin);
+    },
+  },
+  {
+    method: 'PUT',
+    path: '/api/users',
+    auth: true,
+    roles: ['owner'],
+    csrf: true,
+    handler: (_req, res, context) => {
+      const body = asObject(context.body, 'body');
+      const payload = parseUserUpdate(body);
+      if (payload.userId === context.user!.id && (payload.disabled || payload.role === 'operator' || payload.role === 'viewer')) {
+        forbidden('Owner cannot disable or demote the active owner account', 'OWNER_SELF_CHANGE_FORBIDDEN');
+      }
+      const user = updateUser(payload.userId, {
+        role: payload.role,
+        disabled: payload.disabled,
+      });
+      recordAudit('users.update', 'user', { userId: user.id, role: user.role, disabled: user.disabled }, context.ip, context.user?.id);
+      json(res, user, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/users/password',
+    auth: true,
+    roles: ['owner'],
+    csrf: true,
+    handler: (_req, res, context) => {
+      const body = asObject(context.body, 'body');
+      const payload = parseUserPasswordReset(body);
+      resetUserPassword(payload.userId, payload.nextPassword);
+      recordAudit('users.password.reset', 'user', { userId: payload.userId }, context.ip, context.user?.id);
+      json(res, { success: true }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/settings',
     auth: true,
+    roles: ['owner'],
     handler: (_req, res, context) => {
       json(res, {
         runtime: getEffectiveSettings(),
@@ -509,18 +826,18 @@ const routes: RouteDef[] = [
         secretPresence: getRuntimeSecretPresence(),
         readiness: getRuntimeReadiness(),
         billing: getBillingState(),
-      }, 200, context.origin);
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'PUT',
     path: '/api/settings/runtime',
     auth: true,
+    roles: ['owner'],
     csrf: true,
     handler: (_req, res, context) => {
-      const settings = (typeof context.body.settings === 'object' && context.body.settings)
-        ? context.body.settings as Record<string, unknown>
-        : {};
+      const body = asObject(context.body, 'body');
+      const settings = parseRuntimeSettingsPatch(parseSettingsPayload(body));
 
       updateRuntimeSettings(settings);
       reloadRuntimeConfigFromStorage();
@@ -531,27 +848,20 @@ const routes: RouteDef[] = [
         runtime: getEffectiveSettings(),
         secretPresence: getRuntimeSecretPresence(),
         readiness: getRuntimeReadiness(),
-      }, 200, context.origin);
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'PUT',
     path: '/api/settings/secrets',
     auth: true,
+    roles: ['owner'],
     csrf: true,
     handler: (_req, res, context) => {
-      const secrets = (typeof context.body.secrets === 'object' && context.body.secrets)
-        ? context.body.secrets as Record<string, unknown>
-        : {};
+      const body = asObject(context.body, 'body');
+      const secrets = parseSecretsPayload(body);
 
-      const patch = Object.fromEntries(
-        Object.entries(secrets).map(([key, value]) => [
-          key,
-          value === null ? null : typeof value === 'string' ? value : '',
-        ])
-      );
-
-      updateRuntimeSecrets(patch);
+      updateRuntimeSecrets(secrets);
       reloadRuntimeConfigFromStorage();
       recordAudit('settings.secrets.update', 'runtime_secrets', { keys: Object.keys(secrets) }, context.ip, context.user?.id);
 
@@ -559,27 +869,30 @@ const routes: RouteDef[] = [
         success: true,
         secretPresence: getRuntimeSecretPresence(),
         readiness: getRuntimeReadiness(),
-      }, 200, context.origin);
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/billing',
     auth: true,
+    roles: ['owner'],
     handler: (_req, res, context) => {
       json(res, {
         billing: getBillingState(),
         stripe: getStripeConfigSummary(),
-      }, 200, context.origin);
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'POST',
     path: '/api/billing/checkout-session',
     auth: true,
+    roles: ['owner'],
     csrf: true,
     handler: async (_req, res, context) => {
-      const interval = context.body.interval === 'yearly' ? 'yearly' : 'monthly';
+      const body = asObject(context.body, 'body');
+      const interval = parseCheckoutInterval(body);
       const priceId = getSubscriptionPriceId(interval);
       const customerId = await ensureStripeCustomer(context.user!);
 
@@ -604,28 +917,28 @@ const routes: RouteDef[] = [
       json(res, {
         id: session.id,
         url: session.url,
-      }, 200, context.origin);
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'POST',
     path: '/api/billing/portal-session',
     auth: true,
+    roles: ['owner'],
     csrf: true,
     handler: async (_req, res, context) => {
       const billing = getBillingState();
       if (!billing.stripeCustomerId) {
-        jsonErr(res, 'No Stripe customer is linked to this installation yet', 409, context.origin);
-        return;
+        conflict('No Stripe customer is linked to this installation yet', 'STRIPE_CUSTOMER_MISSING');
       }
 
       const session = await stripeFormPost('/v1/billing_portal/sessions', {
-        customer: billing.stripeCustomerId,
+        customer: billing.stripeCustomerId!,
         return_url: `${FRONTEND_BASE_URL.replace(/\/$/, '')}/billing`,
       });
 
       recordAudit('billing.portal_session.create', 'stripe', {}, context.ip, context.user?.id);
-      json(res, { url: session.url }, 200, context.origin);
+      json(res, { url: session.url }, context.requestId, 200, context.origin);
     },
   },
   {
@@ -633,7 +946,7 @@ const routes: RouteDef[] = [
     path: '/api/billing/webhook',
     handler: (_req, res, context) => {
       if (!verifyStripeSignature(context.rawBody, typeof _req.headers['stripe-signature'] === 'string' ? _req.headers['stripe-signature'] : undefined)) {
-        jsonErr(res, 'Invalid Stripe webhook signature', 400, context.origin);
+        jsonErr(res, context.requestId, 'Invalid Stripe webhook signature', 400, context.origin);
         return;
       }
 
@@ -662,21 +975,23 @@ const routes: RouteDef[] = [
       }
 
       recordAudit('billing.webhook.processed', 'stripe_webhook', { eventType }, context.ip);
-      json(res, { received: true }, 200, context.origin);
+      json(res, { received: true }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/audit-logs',
     auth: true,
+    roles: ['owner'],
     handler: (_req, res, context) => {
-      json(res, getAuditLogs(100), 200, context.origin);
+      json(res, getAuditLogs(100), context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/status',
     auth: true,
+    roles: ['owner', 'operator', 'viewer'],
     handler: (_req, res, context) => {
       const queue = store.getQueue();
       const memory = store.getMemoryStats();
@@ -703,57 +1018,64 @@ const routes: RouteDef[] = [
           allowedSubs: [...config.REDDIT_ALLOWED_SUBS],
           model: config.OPENAI_MODEL,
           timezone: config.TIMEZONE,
-            platforms: {
-              linkedin: config.ENABLE_LINKEDIN,
-              threads: config.ENABLE_THREADS,
-              x: config.ENABLE_X,
-              instagram: config.ENABLE_INSTAGRAM,
-              facebook: config.ENABLE_FACEBOOK,
-            },
+          platforms: {
+            linkedin: config.ENABLE_LINKEDIN,
+            threads: config.ENABLE_THREADS,
+            x: config.ENABLE_X,
+            instagram: config.ENABLE_INSTAGRAM,
+            facebook: config.ENABLE_FACEBOOK,
+          },
         },
-      }, 200, context.origin);
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/queue',
     auth: true,
+    roles: ['owner', 'operator', 'viewer'],
     handler: (_req, res, context) => {
       const queue = store.getQueue();
-      json(res, SLOTS.map(slot => ({ slot, post: queue[slot.id] || null })), 200, context.origin);
+      json(res, SLOTS.map(slot => ({ slot, post: queue[slot.id] || null })), context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/history',
     auth: true,
+    roles: ['owner', 'operator', 'viewer'],
     handler: (_req, res, context) => {
-      json(res, store.getHistory().slice(0, 50), 200, context.origin);
+      json(res, store.getHistory().slice(0, 50), context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/memory',
     auth: true,
+    roles: ['owner', 'operator', 'viewer'],
     handler: (_req, res, context) => {
       json(res, {
         stats: store.getMemoryStats(),
         sources: store.getSources().slice(0, 50),
         recentAngles: store.getAngles().slice(-100).reverse().slice(0, 50),
-      }, 200, context.origin);
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'GET',
     path: '/api/logs',
     auth: true,
+    roles: ['owner', 'operator'],
     handler: (_req, res, context) => {
-      const logFile = path.join(__dirname, '..', 'data', 'agent.log');
+      const logDir = process.env.APP_DATA_DIR
+        ? path.resolve(process.env.APP_DATA_DIR)
+        : path.join(getProjectRoot(), 'data');
+      const logFile = path.join(logDir, 'agent.log');
       try {
         const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n');
-        json(res, lines.slice(-150).reverse(), 200, context.origin);
+        json(res, lines.slice(-150).reverse(), context.requestId, 200, context.origin);
       } catch {
-        json(res, [], 200, context.origin);
+        json(res, [], context.requestId, 200, context.origin);
       }
     },
   },
@@ -761,137 +1083,120 @@ const routes: RouteDef[] = [
     method: 'POST',
     path: '/api/fetch',
     auth: true,
+    roles: ['owner', 'operator'],
     csrf: true,
     billing: 'automation',
     handler: async (_req, res, context) => {
-      const stats = await fillEmptySlots(SLOTS, logger);
-      logger.info(`[API] Fetch done — filled:${stats.filled} reused:${stats.reusedAngles} extracted:${stats.extractedSources}`);
-      recordAudit('automation.fetch', 'queue', stats as unknown as Record<string, unknown>, context.ip, context.user?.id);
-      json(res, { ...stats, memory: store.getMemoryStats() }, 200, context.origin);
+      const result = await runFetch(SLOTS, {
+        source: 'api',
+        userId: context.user?.id,
+        requestId: context.requestId,
+      }, logger);
+      logger.info(`[API] Fetch done - filled:${result.stats.filled} reused:${result.stats.reusedAngles} extracted:${result.stats.extractedSources}`);
+      recordAudit('automation.fetch', 'queue', result.stats as unknown as Record<string, unknown>, context.ip, context.user?.id);
+      json(res, { ...result.stats, memory: result.memory }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'POST',
     path: '/api/post-slot',
     auth: true,
+    roles: ['owner', 'operator'],
     csrf: true,
     billing: 'automation',
     handler: async (_req, res, context) => {
-      const slot = getSlot(context.body.slotId);
+      const slot = getSlot(parseSlotId(context.body));
       if (!slot) {
-        jsonErr(res, 'Invalid slot', 400, context.origin);
-        return;
+        badRequest('Invalid slot', 'INVALID_SLOT');
       }
-
-      const item = store.getSlotPost(slot.id);
-      if (!item) {
-        jsonErr(res, 'Slot is empty', 400, context.origin);
-        return;
-      }
-
-      const hydratedItem = await hydrateQueuedItemForActivePlatforms(slot.id, item, logger);
-      const result = await publishQueuedItem(hydratedItem, logger);
-      finalizePublishResult(slot, hydratedItem, result);
+      const result = await runPostSlot(slot, {
+        source: 'api',
+        userId: context.user?.id,
+        requestId: context.requestId,
+      }, logger);
       recordAudit('automation.post_slot', slot.id, {
-        completed: result.completed,
+        completed: result.success,
         pendingPlatforms: result.pendingPlatforms,
       }, context.ip, context.user?.id);
 
       json(res, {
-        success: result.completed,
-        queuedForRetry: !result.completed,
+        success: result.success,
+        queuedForRetry: result.queuedForRetry,
         ids: result.ids,
         errors: result.errors,
         pendingPlatforms: result.pendingPlatforms,
-        memory: store.getMemoryStats(),
-      }, 200, context.origin);
+        memory: result.memory,
+      }, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'POST',
     path: '/api/post-all',
     auth: true,
+    roles: ['owner', 'operator'],
     csrf: true,
     billing: 'automation',
     handler: async (_req, res, context) => {
-      const results: Array<Record<string, unknown>> = [];
-
-      for (const slot of SLOTS) {
-        const item = store.getSlotPost(slot.id);
-        if (!item) {
-          results.push({ slot: slot.label, skipped: true });
-          continue;
-        }
-
-        const hydratedItem = await hydrateQueuedItemForActivePlatforms(slot.id, item, logger);
-        const result = await publishQueuedItem(hydratedItem, logger);
-        finalizePublishResult(slot, hydratedItem, result);
-
-        results.push({
-          slot: slot.label,
-          ids: result.ids,
-          errors: result.errors,
-          queuedForRetry: !result.completed,
-          pendingPlatforms: result.pendingPlatforms,
-        });
-      }
-
-      recordAudit('automation.post_all', 'queue', { processed: results.length }, context.ip, context.user?.id);
-      json(res, { results, memory: store.getMemoryStats() }, 200, context.origin);
+      const result = await runPostAll(SLOTS, {
+        source: 'api',
+        userId: context.user?.id,
+        requestId: context.requestId,
+      }, logger);
+      recordAudit('automation.post_all', 'queue', { processed: result.results.length }, context.ip, context.user?.id);
+      json(res, result, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'PUT',
     path: '/api/slot',
     auth: true,
+    roles: ['owner', 'operator'],
     csrf: true,
     billing: 'automation',
-    handler: (_req, res, context) => {
-      const slot = getSlot(context.body.slotId);
+    handler: async (_req, res, context) => {
+      const slotId = parseSlotId(context.body);
+      const slot = getSlot(slotId);
       if (!slot) {
-        jsonErr(res, 'slotId required', 400, context.origin);
-        return;
+        badRequest('slotId required', 'MISSING_SLOT_ID');
       }
 
-      const existing = store.getSlotPost(slot.id);
-      const updates = (typeof context.body.updates === 'object' && context.body.updates)
-        ? context.body.updates as Partial<QueueItem>
-        : {};
-
-      store.setSlotPost(slot.id, { ...(existing || {}), ...updates } as QueueItem);
+      const updates = parseSlotUpdates(asObject(context.body, 'body'));
+      const result = await runUpdateSlot(slot, updates as Partial<QueueItem>, {
+        source: 'api',
+        userId: context.user?.id,
+        requestId: context.requestId,
+      });
       recordAudit('automation.slot.update', slot.id, { keys: Object.keys(updates) }, context.ip, context.user?.id);
-      json(res, { success: true }, 200, context.origin);
+      json(res, result, context.requestId, 200, context.origin);
     },
   },
   {
     method: 'DELETE',
     path: '/api/slot',
     auth: true,
+    roles: ['owner', 'operator'],
     csrf: true,
     billing: 'automation',
-    handler: (_req, res, context) => {
-      const slot = getSlot(context.body.slotId);
+    handler: async (_req, res, context) => {
+      const slot = getSlot(parseSlotId(context.body));
       if (!slot) {
-        jsonErr(res, 'slotId required', 400, context.origin);
-        return;
+        badRequest('slotId required', 'MISSING_SLOT_ID');
       }
 
-      releaseSlot(slot.id);
+      const result = await runReleaseSlot(slot, {
+        source: 'api',
+        userId: context.user?.id,
+        requestId: context.requestId,
+      });
       recordAudit('automation.slot.release', slot.id, {}, context.ip, context.user?.id);
-      json(res, { success: true, memory: store.getMemoryStats() }, 200, context.origin);
+      json(res, { success: true, ...result }, context.requestId, 200, context.origin);
     },
   },
 ];
 
-function parseStripeEvent(rawBody: string): Record<string, unknown> {
-  try {
-    return JSON.parse(rawBody) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const startedAt = Date.now();
+  const requestId = crypto.randomUUID();
   const origin = getAllowedOrigin(getRequestOrigin(req));
   const parsed = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const pathname = parsed.pathname || '/';
@@ -899,13 +1204,11 @@ const server = http.createServer(async (req, res) => {
 
   if (method === 'OPTIONS') {
     applyCorsHeaders(res, origin);
+    applySecurityHeaders(res, requestId);
     res.writeHead(204, {
       'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Stripe-Signature',
+      'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Stripe-Signature, X-Bootstrap-Token',
       'Access-Control-Max-Age': '600',
-      'Referrer-Policy': 'no-referrer',
-      'X-Content-Type-Options': 'nosniff',
-      'X-Frame-Options': 'DENY',
     });
     res.end();
     return;
@@ -913,62 +1216,107 @@ const server = http.createServer(async (req, res) => {
 
   const route = routes.find(entry => entry.method === method && entry.path === pathname);
   if (route) {
+    const context: RequestContext = {
+      requestId,
+      body: {},
+      rawBody: '',
+      cookies: parseCookies(req),
+      origin,
+      ip: getClientIp(req),
+    };
+
     try {
-      const cookies = parseCookies(req);
-      const { rawBody, body } = ['POST', 'PUT', 'DELETE'].includes(method)
+      const bodyResult = ['POST', 'PUT', 'DELETE'].includes(method)
         ? await readBody(req)
         : { rawBody: '', body: {} };
+      context.rawBody = bodyResult.rawBody;
+      context.body = optionalObject(bodyResult.body);
 
-      const context: RequestContext = {
-        body,
-        rawBody,
-        cookies,
-        origin,
-        ip: getClientIp(req),
-      };
-
-      const session = getSession(cookies[SESSION_COOKIE_NAME]);
+      const session = getSession(context.cookies[SESSION_COOKIE_NAME]);
       if (session) {
         context.session = session;
         context.user = session.user;
       }
 
       if (route.auth && !context.session) {
-        jsonErr(res, 'Authentication required', 401, origin);
-        return;
+        unauthorized();
+      }
+
+      if (route.auth && context.session?.user.disabled) {
+        destroySession(context.cookies[SESSION_COOKIE_NAME]);
+        unauthorized('Authentication required', 'SESSION_DISABLED');
+      }
+
+      if (route.auth && route.roles && context.user && !route.roles.includes(context.user.role)) {
+        forbidden('You do not have access to this route', 'ROLE_FORBIDDEN');
+      }
+
+      if (route.auth && !route.allowPendingMfa && context.session?.user.mfaEnabled && !context.session.mfaVerified) {
+        forbidden('MFA verification required', 'MFA_REQUIRED');
       }
 
       if (route.csrf) {
         const csrfHeader = req.headers['x-csrf-token'];
         const csrfToken = Array.isArray(csrfHeader) ? csrfHeader[0] : csrfHeader;
         if (!assertCsrf(context.session, csrfToken)) {
-          jsonErr(res, 'Invalid CSRF token', 403, origin);
-          return;
+          forbidden('Invalid CSRF token', 'INVALID_CSRF');
         }
       }
 
       if (route.billing === 'automation') {
         const gate = getAutomationGate();
         if (!gate.allowed) {
-          jsonErr(res, 'Automation is not available', 403, origin, { gate });
-          return;
+          forbidden('Automation is not available', 'AUTOMATION_BLOCKED', { gate });
         }
       }
 
       await route.handler(req, res, context);
+      logRequest(context, method, pathname, res.statusCode || 200, startedAt);
+      return;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(`[API] ${method} ${pathname}: ${message}`);
-      jsonErr(res, message, getErrorStatus(error), origin);
+      const mapped = mapInternalError(error);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      logger.error('request_error', {
+        type: 'request_error',
+        requestId,
+        method,
+        pathname,
+        status: mapped.status,
+        errorMessage: rawMessage,
+        ip: context.ip,
+        userId: context.user?.id,
+      });
+
+      if (mapped.status === 401 || mapped.status === 403 || mapped.status === 429) {
+        recordAudit('security.request.denied', pathname, {
+          status: mapped.status,
+          code: mapped.code,
+          method,
+        }, context.ip, context.user?.id);
+      }
+
+      jsonErr(
+        res,
+        requestId,
+        mapped.expose ? mapped.message : 'Internal server error',
+        mapped.status,
+        origin,
+        mapped.expose ? {
+          ...(mapped.code ? { code: mapped.code } : {}),
+          ...(mapped.details ? { details: mapped.details } : {}),
+        } : undefined
+      );
+      logRequest(context, method, pathname, mapped.status, startedAt, mapped.code ? { errorCode: mapped.code } : undefined);
+      return;
     }
-    return;
   }
 
-  const publicDir = path.join(__dirname, '..', 'public');
+  const publicDir = path.join(getRuntimeRoot(), 'public');
   const requestedPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.join(publicDir, requestedPath.replace(/^\/+/, ''));
 
   if (!filePath.startsWith(publicDir)) {
+    applySecurityHeaders(res, requestId);
     res.writeHead(403);
     res.end('Forbidden');
     return;
@@ -986,19 +1334,50 @@ const server = http.createServer(async (req, res) => {
   try {
     const data = fs.readFileSync(filePath);
     applyCorsHeaders(res, origin);
-    res.writeHead(200, {
-      'Content-Type': mime,
-      'Referrer-Policy': 'no-referrer',
-      'X-Content-Type-Options': 'nosniff',
-      'X-Frame-Options': 'DENY',
-    });
+    applySecurityHeaders(res, requestId, mime);
+    res.writeHead(200);
     res.end(data);
   } catch {
+    applySecurityHeaders(res, requestId);
     res.writeHead(404);
     res.end('Not found');
   }
-});
+}
 
-server.listen(PORT, () => {
-  logger.info(`Dashboard/API running at http://localhost:${PORT}`);
-});
+export function startServer(port = PORT): http.Server {
+  if (activeServer) {
+    return activeServer;
+  }
+
+  const productionIssues = validateProductionConfig();
+  if (productionIssues.length) {
+    throw new Error(`Invalid production configuration: ${productionIssues.join(' | ')}`);
+  }
+
+  activeServer = http.createServer((req, res) => {
+    void handleRequest(req, res);
+  });
+  activeServer.listen(port, () => {
+    logger.info(`Dashboard/API running at http://localhost:${port}`);
+  });
+  return activeServer;
+}
+
+export async function stopServer(): Promise<void> {
+  if (!activeServer) return;
+  const server = activeServer;
+  activeServer = undefined;
+  await new Promise<void>((resolve, reject) => {
+    server.close(error => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}

@@ -3,10 +3,6 @@ import config from '../config';
 import * as store from './store';
 import * as x from './x';
 
-function previewSecret(value: string): string {
-  return value ? `${value.slice(0, 8)}...` : 'NOT SET';
-}
-
 async function main(): Promise<void> {
   const livePost = process.argv.includes('--live-post');
   const authMode = x.getConfiguredAuthMode();
@@ -14,9 +10,9 @@ async function main(): Promise<void> {
   console.log('\n-- X Credential Test ------------------------');
   console.log(`ENABLE_X: ${config.ENABLE_X ? 'true' : 'false'}`);
   console.log(`Auth mode: ${authMode}`);
-  console.log(`X_API_KEY: ${previewSecret(config.X_API_KEY)}`);
-  console.log(`X_ACCESS_TOKEN: ${previewSecret(config.X_ACCESS_TOKEN)}`);
-  console.log(`X_OAUTH2_ACCESS_TOKEN: ${previewSecret(config.X_OAUTH2_ACCESS_TOKEN)}`);
+  console.log(`X_API_KEY configured: ${config.X_API_KEY ? 'yes' : 'no'}`);
+  console.log(`X_ACCESS_TOKEN configured: ${config.X_ACCESS_TOKEN ? 'yes' : 'no'}`);
+  console.log(`X_OAUTH2_ACCESS_TOKEN configured: ${config.X_OAUTH2_ACCESS_TOKEN ? 'yes' : 'no'}`);
 
   if (authMode === 'unconfigured') {
     console.log('\nNo supported X auth is configured. Add OAuth 1.0a user credentials or a real OAuth 2.0 user token before testing X.');

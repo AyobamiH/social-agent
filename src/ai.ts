@@ -1,9 +1,8 @@
-import * as https from 'node:https';
-
 import bannedPhrases from '../content-os/BANNED_PHRASES.json';
 import config from '../config';
 
 import * as store from './store';
+import { requestJson } from './http-client';
 
 import type {
   AngleCandidate,
@@ -209,38 +208,19 @@ function chatComplete(
     ],
   });
 
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'api.openai.com',
-      path: '/v1/chat/completions',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.OPENAI_API_KEY}`,
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, res => {
-      let data = '';
-      res.on('data', chunk => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data) as ChatCompletionResponse;
-          if (json.error) {
-            reject(new Error('OpenAI: ' + (json.error.message || 'Unknown error')));
-            return;
-          }
-          resolve(json.choices?.[0]?.message?.content?.trim() || '');
-        } catch (error) {
-          reject(new Error('OpenAI parse error: ' + String(error)));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+  return requestJson<ChatCompletionResponse>('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.OPENAI_API_KEY}`,
+    },
+    body,
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  }).then(({ data }) => {
+    if (data.error) {
+      throw new Error('OpenAI: ' + (data.error.message || 'Unknown error'));
+    }
+    return data.choices?.[0]?.message?.content?.trim() || '';
   });
 }
 
@@ -619,38 +599,19 @@ Return ONLY the image prompt, nothing else.`,
     }],
   });
 
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'api.openai.com',
-      path: '/v1/chat/completions',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.OPENAI_API_KEY}`,
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, res => {
-      let data = '';
-      res.on('data', chunk => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data) as ChatCompletionResponse;
-          if (json.error) {
-            reject(new Error('OpenAI: ' + (json.error.message || 'Unknown error')));
-            return;
-          }
-          resolve(json.choices?.[0]?.message?.content?.trim() || source.title);
-        } catch (error) {
-          reject(new Error('Prompt gen error: ' + String(error)));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+  return requestJson<ChatCompletionResponse>('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.OPENAI_API_KEY}`,
+    },
+    body,
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  }).then(({ data }) => {
+    if (data.error) {
+      throw new Error('OpenAI: ' + (data.error.message || 'Unknown error'));
+    }
+    return data.choices?.[0]?.message?.content?.trim() || source.title;
   });
 }
 
@@ -670,41 +631,22 @@ async function generateImage(
     style: 'natural',
   });
 
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'api.openai.com',
-      path: '/v1/images/generations',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.OPENAI_API_KEY}`,
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, res => {
-      let data = '';
-      res.on('data', chunk => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data) as ImageGenerationResponse;
-          if (json.error) {
-            reject(new Error('DALL-E: ' + (json.error.message || 'Unknown error')));
-            return;
-          }
-          resolve({
-            imagePrompt,
-            imageUrl: json.data?.[0]?.url || '',
-          });
-        } catch (error) {
-          reject(new Error('DALL-E parse error: ' + String(error)));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+  return requestJson<ImageGenerationResponse>('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.OPENAI_API_KEY}`,
+    },
+    body,
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  }).then(({ data }) => {
+    if (data.error) {
+      throw new Error('DALL-E: ' + (data.error.message || 'Unknown error'));
+    }
+    return {
+      imagePrompt,
+      imageUrl: data.data?.[0]?.url || '',
+    };
   });
 }
 

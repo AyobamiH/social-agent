@@ -13,9 +13,10 @@
     "forceConsistentCasingInFileNames": true,
     "useUnknownInCatchVariables": false,
     "rootDir": ".",
+    "outDir": "dist",
     "noEmitOnError": true,
     "ignoreDeprecations": "6.0"
   },
-  "include": ["config.ts", "src/**/*.ts"],
-  "exclude": ["node_modules", "data", "public"]
+  "include": ["config.ts", "src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "data", "dist", "public"]
 }

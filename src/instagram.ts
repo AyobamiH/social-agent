@@ -1,6 +1,5 @@
-import * as https from 'node:https';
-
 import config from '../config';
+import { requestJson } from './http-client';
 
 interface GraphSuccess {
   id: string;
@@ -56,7 +55,8 @@ async function resolveInstagramAccountId(): Promise<string> {
   }
 
   const page = await apiGet<PageDetailsResponse>(
-    `/${version}/${pageId}?fields=instagram_business_account{id}&access_token=${encodeURIComponent(token)}`
+    `/${version}/${pageId}?fields=instagram_business_account{id}`,
+    token
   );
 
   if (page.error) {
@@ -85,7 +85,8 @@ async function resolveInstagramAccessToken(): Promise<string> {
   }
 
   const page = await apiGet<PageDetailsResponse>(
-    `/${version}/${pageId}?fields=access_token&access_token=${encodeURIComponent(token)}`
+    `/${version}/${pageId}?fields=access_token`,
+    token
   );
 
   if (page.error) {
@@ -99,65 +100,31 @@ async function resolveInstagramAccessToken(): Promise<string> {
   return page.access_token;
 }
 
-function apiGet<T extends GraphErrorResponse>(pathname: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    https.get({
-      hostname: 'graph.facebook.com',
-      path: pathname,
-      headers: {
-        Accept: 'application/json',
-      },
-    }, res => {
-      let data = '';
-      res.on('data', chunk => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(data) as T);
-        } catch (error) {
-          reject(new Error('Instagram parse error: ' + String(error)));
-        }
-      });
-    }).on('error', reject);
-  });
+function apiGet<T extends GraphErrorResponse>(pathname: string, token: string): Promise<T> {
+  return requestJson<T>(`https://graph.facebook.com${pathname}`, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  }).then(({ data }) => data);
 }
 
 function apiPost(pathname: string, params: Record<string, string>, token: string): Promise<string> {
   const body = JSON.stringify(params);
-
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'graph.facebook.com',
-      path: pathname,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, res => {
-      let data = '';
-      res.on('data', chunk => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data) as GraphErrorResponse;
-          if (json.error) {
-            reject(new Error('Instagram API: ' + (json.error.message || 'Unknown error')));
-            return;
-          }
-          resolve((json as GraphSuccess).id);
-        } catch (error) {
-          reject(new Error('Instagram parse error: ' + String(error)));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+  return requestJson<GraphErrorResponse & GraphSuccess>(`https://graph.facebook.com${pathname}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body,
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  }).then(({ data }) => {
+    if (data.error) {
+      throw new Error('Instagram API: ' + (data.error.message || 'Unknown error'));
+    }
+    return data.id;
   });
 }
 

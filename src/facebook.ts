@@ -1,6 +1,5 @@
-import * as https from 'node:https';
-
 import config from '../config';
+import { requestJson } from './http-client';
 
 interface GraphSuccess {
   id: string;
@@ -22,38 +21,19 @@ export function publish(message: string): Promise<string> {
     throw new Error('FACEBOOK_GROUP_ID or META_ACCESS_TOKEN not set');
   }
 
-  const body = JSON.stringify({ message, access_token: token });
-
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'graph.facebook.com',
-      path: `/${version}/${groupId}/feed`,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, res => {
-      let data = '';
-      res.on('data', chunk => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data) as GraphErrorResponse;
-          if (json.error) {
-            reject(new Error('Facebook API: ' + (json.error.message || 'Unknown error')));
-            return;
-          }
-          resolve((json as GraphSuccess).id);
-        } catch (error) {
-          reject(new Error('Facebook parse error: ' + String(error)));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+  const body = JSON.stringify({ message });
+  return requestJson<GraphErrorResponse & GraphSuccess>(`https://graph.facebook.com/${version}/${groupId}/feed`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body,
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  }).then(({ data }) => {
+    if (data.error) {
+      throw new Error('Facebook API: ' + (data.error.message || 'Unknown error'));
+    }
+    return data.id;
   });
 }

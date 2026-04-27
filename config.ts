@@ -3,7 +3,17 @@ import * as path from 'node:path';
 
 import { getStoredRuntimeConfigPatch } from './src/control-plane';
 
+function getProjectRoot(): string {
+  return path.basename(__dirname) === 'dist'
+    ? path.resolve(__dirname, '..')
+    : __dirname;
+}
+
+const PROJECT_ROOT = getProjectRoot();
+
 export interface AppConfig {
+  NODE_ENV: string;
+  APP_DATA_DIR: string;
   REDDIT_USER: string;
   REDDIT_ALLOWED_SUBS: Set<string>;
   REDDIT_SORT: string;
@@ -36,9 +46,13 @@ export interface AppConfig {
   FACEBOOK_PAGE_ID: string;
   TIMEZONE: string;
   GUI_PORT: number;
+  TRUST_PROXY: boolean;
+  BOOTSTRAP_MODE: 'disabled' | 'token' | 'localhost';
+  BOOTSTRAP_TOKEN: string;
+  HTTP_TIMEOUT_MS: number;
 }
 
-const envPath = path.join(__dirname, '.env');
+const envPath = path.join(PROJECT_ROOT, '.env');
 
 if (fs.existsSync(envPath)) {
   const lines = fs.readFileSync(envPath, 'utf8').split('\n');
@@ -63,6 +77,19 @@ function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean 
   return /^(1|true|yes|on)$/i.test(value.trim());
 }
 
+function parseBootstrapMode(value: string | undefined): 'disabled' | 'token' | 'localhost' {
+  switch ((value || 'localhost').trim().toLowerCase()) {
+    case 'disabled':
+      return 'disabled';
+    case 'token':
+      return 'token';
+    case 'localhost':
+      return 'localhost';
+    default:
+      return 'localhost';
+  }
+}
+
 function toSubSet(value: string | string[] | Set<string> | undefined, fallback: string): Set<string> {
   if (value instanceof Set) return new Set(value);
   const entries = Array.isArray(value)
@@ -80,6 +107,8 @@ function toSubSet(value: string | string[] | Set<string> | undefined, fallback: 
 
 function buildBaseConfig(): AppConfig {
   return {
+    NODE_ENV: process.env.NODE_ENV || 'development',
+    APP_DATA_DIR: process.env.APP_DATA_DIR || path.join(PROJECT_ROOT, 'data'),
     REDDIT_USER: process.env.REDDIT_USER || 'advanced_pudding9228',
     REDDIT_ALLOWED_SUBS: toSubSet(process.env.REDDIT_ALLOWED_SUBS, 'openclawbot,lovablebuildershub'),
     REDDIT_SORT: process.env.REDDIT_SORT || 'new',
@@ -118,6 +147,10 @@ function buildBaseConfig(): AppConfig {
     FACEBOOK_PAGE_ID: process.env.FACEBOOK_PAGE_ID || '',
     TIMEZONE: process.env.TIMEZONE || 'Europe/London',
     GUI_PORT: Number.parseInt(process.env.GUI_PORT || '4001', 10),
+    TRUST_PROXY: parseBooleanEnv(process.env.TRUST_PROXY, false),
+    BOOTSTRAP_MODE: parseBootstrapMode(process.env.BOOTSTRAP_MODE),
+    BOOTSTRAP_TOKEN: process.env.BOOTSTRAP_TOKEN || '',
+    HTTP_TIMEOUT_MS: Number.parseInt(process.env.HTTP_TIMEOUT_MS || '15000', 10),
   };
 }
 
@@ -166,6 +199,7 @@ export function applyRuntimeConfig(patch: Record<string, unknown>): AppConfig {
   if (typeof patch.FACEBOOK_USER_ID === 'string') config.FACEBOOK_USER_ID = patch.FACEBOOK_USER_ID;
   if (typeof patch.FACEBOOK_PAGE_ID === 'string') config.FACEBOOK_PAGE_ID = patch.FACEBOOK_PAGE_ID;
   if (typeof patch.TIMEZONE === 'string') config.TIMEZONE = patch.TIMEZONE;
+  if (typeof patch.APP_DATA_DIR === 'string') config.APP_DATA_DIR = patch.APP_DATA_DIR;
 
   return config;
 }
@@ -175,5 +209,29 @@ export function reloadRuntimeConfigFromStorage(): AppConfig {
 }
 
 reloadRuntimeConfigFromStorage();
+
+export function validateProductionConfig(current = config): string[] {
+  const issues: string[] = [];
+
+  if (current.NODE_ENV === 'production') {
+    if (!parseBooleanEnv(process.env.COOKIE_SECURE, false)) {
+      issues.push('COOKIE_SECURE must be true in production');
+    }
+    if (!process.env.APP_ENCRYPTION_KEY?.trim()) {
+      issues.push('APP_ENCRYPTION_KEY must be set in production');
+    }
+    if (!current.APP_DATA_DIR.trim()) {
+      issues.push('APP_DATA_DIR must be set in production');
+    }
+    if (current.BOOTSTRAP_MODE !== 'disabled' && current.BOOTSTRAP_MODE !== 'token') {
+      issues.push('BOOTSTRAP_MODE must be disabled or token in production');
+    }
+    if (current.BOOTSTRAP_MODE === 'token' && !current.BOOTSTRAP_TOKEN.trim()) {
+      issues.push('BOOTSTRAP_TOKEN is required when BOOTSTRAP_MODE=token');
+    }
+  }
+
+  return issues;
+}
 
 export default config;

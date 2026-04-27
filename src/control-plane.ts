@@ -3,7 +3,18 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+import { badRequest, conflict, forbidden, locked, notFound, tooManyRequests, unauthorized } from './errors';
+
+function getProjectRoot(): string {
+  const parent = path.resolve(__dirname, '..');
+  return path.basename(parent) === 'dist'
+    ? path.resolve(parent, '..')
+    : parent;
+}
+
+const DATA_DIR = process.env.APP_DATA_DIR
+  ? path.resolve(process.env.APP_DATA_DIR)
+  : path.join(getProjectRoot(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'control-plane.sqlite');
 const KEY_FILE = path.join(DATA_DIR, 'control-plane.key');
 
@@ -11,7 +22,7 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-export type AppRole = 'owner';
+export type AppRole = 'owner' | 'operator' | 'viewer';
 export type BillingStatus =
   | 'setup'
   | 'trialing'
@@ -84,6 +95,9 @@ export interface AuthUser {
   id: number;
   email: string;
   role: AppRole;
+  disabled: boolean;
+  mfaRequired: boolean;
+  mfaEnabled: boolean;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -95,6 +109,7 @@ export interface SessionUser {
   sessionToken: string;
   csrfToken: string;
   expiresAt: string;
+  mfaVerified: boolean;
 }
 
 export interface NewSession {
@@ -102,6 +117,7 @@ export interface NewSession {
   csrfToken: string;
   user: AuthUser;
   expiresAt: string;
+  mfaVerified: boolean;
 }
 
 export interface AuditLogEntry {
@@ -119,6 +135,10 @@ interface StoredUserRow {
   email: string;
   role: string;
   password_hash: string;
+  disabled?: number | null;
+  mfa_required?: number | null;
+  mfa_secret_encrypted?: string | null;
+  mfa_enabled_at?: string | null;
   created_at: string;
   updated_at: string;
   last_login_at?: string | null;
@@ -130,6 +150,7 @@ interface StoredSessionRow {
   token_hash: string;
   csrf_token: string;
   expires_at: string;
+  mfa_verified?: number | null;
   created_at: string;
   last_seen_at: string;
   user_agent?: string | null;
@@ -143,6 +164,21 @@ interface StoredAuditRow {
   target: string;
   metadata_json: string;
   ip?: string | null;
+  created_at: string;
+}
+
+interface StoredThrottleRow {
+  scope: string;
+  identifier: string;
+  count: number;
+  first_failed_at: string;
+  last_failed_at: string;
+  locked_until?: string | null;
+}
+
+interface StoredMfaEnrollmentRow {
+  user_id: number;
+  secret_encrypted: string;
   created_at: string;
 }
 
@@ -193,10 +229,43 @@ db.exec(`
     created_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS app_auth_throttle (
+    scope TEXT NOT NULL,
+    identifier TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    first_failed_at TEXT NOT NULL,
+    last_failed_at TEXT NOT NULL,
+    locked_until TEXT,
+    PRIMARY KEY (scope, identifier)
+  );
+
+  CREATE TABLE IF NOT EXISTS app_mfa_enrollment (
+    user_id INTEGER PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
+    secret_encrypted TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_app_sessions_token_hash ON app_sessions(token_hash);
   CREATE INDEX IF NOT EXISTS idx_app_sessions_user_id ON app_sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_app_audit_logs_created_at ON app_audit_logs(created_at DESC);
 `);
+
+function columnExists(tableName: string, columnName: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return rows.some(row => row.name === columnName);
+}
+
+function ensureColumn(tableName: string, columnName: string, sqlType: string): void {
+  if (!columnExists(tableName, columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${sqlType}`);
+  }
+}
+
+ensureColumn('app_users', 'disabled', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('app_users', 'mfa_required', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('app_users', 'mfa_secret_encrypted', 'TEXT');
+ensureColumn('app_users', 'mfa_enabled_at', 'TEXT');
+ensureColumn('app_sessions', 'mfa_verified', 'INTEGER NOT NULL DEFAULT 1');
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -210,6 +279,21 @@ function getTrialDays(): number {
 function getSessionTtlDays(): number {
   const parsed = Number.parseInt(process.env.SESSION_TTL_DAYS || '30', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+}
+
+function getAuthAttemptWindowMinutes(): number {
+  const parsed = Number.parseInt(process.env.AUTH_ATTEMPT_WINDOW_MINUTES || '15', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15;
+}
+
+function getAuthMaxAttempts(): number {
+  const parsed = Number.parseInt(process.env.AUTH_MAX_ATTEMPTS || '5', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 5;
+}
+
+function getAuthLockMinutes(): number {
+  const parsed = Number.parseInt(process.env.AUTH_LOCK_MINUTES || '15', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15;
 }
 
 function getSingleton(key: string): string | undefined {
@@ -321,12 +405,16 @@ function verifyPassword(password: string, storedHash: string): boolean {
     maxmem: 128 * 1024 * 1024,
   });
 
-  if (expected.length !== derived.length) return false;
-  return crypto.timingSafeEqual(expected, derived);
+  return expected.length === derived.length
+    && crypto.timingSafeEqual(expected, derived);
 }
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+function isPrivilegedRole(role: AppRole): boolean {
+  return role === 'owner' || role === 'operator';
 }
 
 function toAuthUser(row: StoredUserRow): AuthUser {
@@ -334,6 +422,9 @@ function toAuthUser(row: StoredUserRow): AuthUser {
     id: row.id,
     email: row.email,
     role: row.role as AppRole,
+    disabled: Boolean(row.disabled),
+    mfaRequired: Boolean(row.mfa_required),
+    mfaEnabled: Boolean(row.mfa_enabled_at && row.mfa_secret_encrypted),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastLoginAt: row.last_login_at || undefined,
@@ -346,6 +437,95 @@ function getUserByEmail(email: string): StoredUserRow | undefined {
 
 function getUserById(id: number): StoredUserRow | undefined {
   return db.prepare('SELECT * FROM app_users WHERE id = ?').get(id) as StoredUserRow | undefined;
+}
+
+function getRequiredUserById(id: number): StoredUserRow {
+  const user = getUserById(id);
+  if (!user) notFound('User not found', 'USER_NOT_FOUND');
+  return user;
+}
+
+function getRequiredAuthUserById(id: number): AuthUser {
+  return toAuthUser(getRequiredUserById(id));
+}
+
+function getThrottleRow(scope: string, identifier: string): StoredThrottleRow | undefined {
+  return db.prepare(`
+    SELECT * FROM app_auth_throttle
+    WHERE scope = ? AND identifier = ?
+  `).get(scope, identifier) as StoredThrottleRow | undefined;
+}
+
+function clearThrottle(scope: string, identifier: string): void {
+  db.prepare('DELETE FROM app_auth_throttle WHERE scope = ? AND identifier = ?').run(scope, identifier);
+}
+
+function upsertThrottleFailure(scope: string, identifier: string): StoredThrottleRow {
+  const current = getThrottleRow(scope, identifier);
+  const now = new Date();
+  const nowValue = now.toISOString();
+  const windowMs = getAuthAttemptWindowMinutes() * 60 * 1000;
+  const lockMs = getAuthLockMinutes() * 60 * 1000;
+
+  let count = 1;
+  let firstFailedAt = nowValue;
+  let lockedUntil: string | null = null;
+
+  if (current) {
+    const firstMs = Date.parse(current.first_failed_at);
+    if (Number.isFinite(firstMs) && now.getTime() - firstMs <= windowMs) {
+      count = current.count + 1;
+      firstFailedAt = current.first_failed_at;
+    }
+  }
+
+  if (count >= getAuthMaxAttempts()) {
+    lockedUntil = new Date(now.getTime() + lockMs).toISOString();
+  }
+
+  db.prepare(`
+    INSERT INTO app_auth_throttle (scope, identifier, count, first_failed_at, last_failed_at, locked_until)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(scope, identifier)
+    DO UPDATE SET
+      count = excluded.count,
+      first_failed_at = excluded.first_failed_at,
+      last_failed_at = excluded.last_failed_at,
+      locked_until = excluded.locked_until
+  `).run(scope, identifier, count, firstFailedAt, nowValue, lockedUntil);
+
+  return getThrottleRow(scope, identifier)!;
+}
+
+function assertNotThrottled(email: string, ip?: string): void {
+  const rows = [
+    getThrottleRow('email', normalizeEmail(email)),
+    ip ? getThrottleRow('ip', ip) : undefined,
+  ].filter((row): row is StoredThrottleRow => Boolean(row));
+
+  for (const row of rows) {
+    const lockedUntil = row.locked_until ? Date.parse(row.locked_until) : 0;
+    if (lockedUntil > Date.now()) {
+      const retryAfterSec = Math.max(1, Math.ceil((lockedUntil - Date.now()) / 1000));
+      tooManyRequests('Too many authentication attempts. Try again later.', 'AUTH_THROTTLED', {
+        retryAfterSec,
+      });
+    }
+  }
+}
+
+function registerLoginFailure(email: string, ip?: string): void {
+  upsertThrottleFailure('email', normalizeEmail(email));
+  if (ip) {
+    upsertThrottleFailure('ip', ip);
+  }
+}
+
+function clearLoginFailures(email: string, ip?: string): void {
+  clearThrottle('email', normalizeEmail(email));
+  if (ip) {
+    clearThrottle('ip', ip);
+  }
 }
 
 function upsertBillingState(next: BillingState): BillingState {
@@ -407,21 +587,30 @@ export function hasUsers(): boolean {
   return row.count > 0;
 }
 
-function createSessionForUser(user: AuthUser, userAgent?: string, ip?: string): NewSession {
+function createSessionForUser(
+  user: AuthUser,
+  userAgent?: string,
+  ip?: string,
+  options?: {
+    mfaVerified?: boolean;
+  }
+): NewSession {
   const token = randomToken(32);
   const csrfToken = randomToken(24);
   const createdAt = nowIso();
   const expiresAt = new Date(Date.now() + getSessionTtlDays() * 24 * 60 * 60 * 1000).toISOString();
+  const mfaVerified = options?.mfaVerified ?? !user.mfaEnabled;
 
   db.prepare(`
     INSERT INTO app_sessions (
-      user_id, token_hash, csrf_token, expires_at, created_at, last_seen_at, user_agent, ip
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      user_id, token_hash, csrf_token, expires_at, mfa_verified, created_at, last_seen_at, user_agent, ip
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     user.id,
     hashToken(token),
     csrfToken,
     expiresAt,
+    mfaVerified ? 1 : 0,
     createdAt,
     createdAt,
     userAgent || null,
@@ -433,7 +622,27 @@ function createSessionForUser(user: AuthUser, userAgent?: string, ip?: string): 
     csrfToken,
     user,
     expiresAt,
+    mfaVerified,
   };
+}
+
+export function issueSessionForUser(
+  userId: number,
+  userAgent?: string,
+  ip?: string,
+  options?: {
+    mfaVerified?: boolean;
+    revokeExisting?: boolean;
+  }
+): NewSession {
+  if (options?.revokeExisting) {
+    destroyAllSessionsForUser(userId);
+  }
+  return createSessionForUser(getRequiredAuthUserById(userId), userAgent, ip, options);
+}
+
+function destroySessionById(sessionId: number): void {
+  db.prepare('DELETE FROM app_sessions WHERE id = ?').run(sessionId);
 }
 
 export function getSession(token: string | undefined): SessionUser | undefined {
@@ -441,15 +650,15 @@ export function getSession(token: string | undefined): SessionUser | undefined {
   const session = db.prepare('SELECT * FROM app_sessions WHERE token_hash = ?').get(hashToken(token)) as StoredSessionRow | undefined;
   if (!session) return undefined;
   if (new Date(session.expires_at).getTime() <= Date.now()) {
-    db.prepare('DELETE FROM app_sessions WHERE id = ?').run(session.id);
+    destroySessionById(session.id);
     return undefined;
   }
 
   db.prepare('UPDATE app_sessions SET last_seen_at = ? WHERE id = ?').run(nowIso(), session.id);
 
   const user = getUserById(session.user_id);
-  if (!user) {
-    db.prepare('DELETE FROM app_sessions WHERE id = ?').run(session.id);
+  if (!user || user.disabled) {
+    destroySessionById(session.id);
     return undefined;
   }
 
@@ -459,6 +668,7 @@ export function getSession(token: string | undefined): SessionUser | undefined {
     sessionToken: token,
     csrfToken: session.csrf_token,
     expiresAt: session.expires_at,
+    mfaVerified: Boolean(session.mfa_verified),
   };
 }
 
@@ -476,23 +686,40 @@ export function destroySession(token: string | undefined): void {
   db.prepare('DELETE FROM app_sessions WHERE token_hash = ?').run(hashToken(token));
 }
 
+export function destroyAllSessionsForUser(userId: number): void {
+  db.prepare('DELETE FROM app_sessions WHERE user_id = ?').run(userId);
+}
+
+function normalizeRole(role: AppRole): AppRole {
+  if (!['owner', 'operator', 'viewer'].includes(role)) {
+    badRequest('Invalid role', 'INVALID_ROLE');
+  }
+  return role;
+}
+
+function assertPassword(password: string): void {
+  if (password.length < 12) {
+    badRequest('Password must be at least 12 characters', 'WEAK_PASSWORD');
+  }
+}
+
 export function bootstrapOwner(email: string, password: string, userAgent?: string, ip?: string): NewSession {
   if (hasUsers()) {
-    throw new Error('Owner already exists');
+    conflict('Owner already exists', 'OWNER_EXISTS');
   }
 
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail || !normalizedEmail.includes('@')) {
-    throw new Error('Valid email is required');
+    badRequest('Valid email is required', 'INVALID_EMAIL');
   }
-  if (password.length < 12) {
-    throw new Error('Password must be at least 12 characters');
-  }
+  assertPassword(password);
 
   const createdAt = nowIso();
   const result = db.prepare(`
-    INSERT INTO app_users (email, role, password_hash, created_at, updated_at)
-    VALUES (?, 'owner', ?, ?, ?)
+    INSERT INTO app_users (
+      email, role, password_hash, disabled, mfa_required, mfa_secret_encrypted, mfa_enabled_at, created_at, updated_at
+    )
+    VALUES (?, 'owner', ?, 0, 1, NULL, NULL, ?, ?)
   `).run(normalizedEmail, hashPassword(password), createdAt, createdAt);
 
   const user = getUserById(Number(result.lastInsertRowid));
@@ -514,39 +741,310 @@ export function bootstrapOwner(email: string, password: string, userAgent?: stri
     trialEndsAt,
   }, ip, user.id);
 
-  return createSessionForUser(toAuthUser(user), userAgent, ip);
+  return createSessionForUser(toAuthUser(user), userAgent, ip, { mfaVerified: true });
 }
 
 export function login(email: string, password: string, userAgent?: string, ip?: string): NewSession {
-  const user = getUserByEmail(email);
+  const normalizedEmail = normalizeEmail(email);
+  assertNotThrottled(normalizedEmail, ip);
+
+  const user = getUserByEmail(normalizedEmail);
   if (!user || !verifyPassword(password, user.password_hash)) {
-    throw new Error('Invalid email or password');
+    registerLoginFailure(normalizedEmail, ip);
+    recordAudit('auth.login.failed', 'user', { email: normalizedEmail }, ip);
+    unauthorized('Invalid email or password', 'INVALID_CREDENTIALS');
   }
 
+  if (user.disabled) {
+    recordAudit('auth.login.denied_disabled', 'user', { email: normalizedEmail }, ip, user.id);
+    forbidden('Account is disabled', 'ACCOUNT_DISABLED');
+  }
+
+  clearLoginFailures(normalizedEmail, ip);
+  const loginAt = nowIso();
   db.prepare('UPDATE app_users SET last_login_at = ?, updated_at = ? WHERE id = ?')
-    .run(nowIso(), nowIso(), user.id);
+    .run(loginAt, loginAt, user.id);
+
   recordAudit('auth.login', 'user', { email: user.email }, ip, user.id);
 
-  return createSessionForUser(toAuthUser({
+  const authUser = toAuthUser({
     ...user,
-    last_login_at: nowIso(),
-  }), userAgent, ip);
+    last_login_at: loginAt,
+  });
+
+  return createSessionForUser(authUser, userAgent, ip, {
+    mfaVerified: !authUser.mfaEnabled,
+  });
+}
+
+export function logoutAllSessions(userId: number): void {
+  destroyAllSessionsForUser(userId);
 }
 
 export function changePassword(userId: number, currentPassword: string, nextPassword: string): void {
-  const user = getUserById(userId);
-  if (!user) {
-    throw new Error('User not found');
-  }
+  const user = getRequiredUserById(userId);
   if (!verifyPassword(currentPassword, user.password_hash)) {
-    throw new Error('Current password is incorrect');
+    unauthorized('Current password is incorrect', 'INVALID_CURRENT_PASSWORD');
   }
-  if (nextPassword.length < 12) {
-    throw new Error('Password must be at least 12 characters');
-  }
+  assertPassword(nextPassword);
 
   db.prepare('UPDATE app_users SET password_hash = ?, updated_at = ? WHERE id = ?')
     .run(hashPassword(nextPassword), nowIso(), userId);
+  destroyAllSessionsForUser(userId);
+}
+
+function base32Encode(buffer: Buffer): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  let output = '';
+
+  for (const byte of buffer) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      output += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+
+  if (bits > 0) {
+    output += alphabet[(value << (5 - bits)) & 31];
+  }
+
+  return output;
+}
+
+function base32Decode(value: string): Buffer {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let buffer = 0;
+  const bytes: number[] = [];
+
+  for (const char of value.replace(/=+$/g, '').toUpperCase()) {
+    const index = alphabet.indexOf(char);
+    if (index < 0) continue;
+    buffer = (buffer << 5) | index;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((buffer >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+
+  return Buffer.from(bytes);
+}
+
+function computeTotp(secret: string, counter: number, digits = 6): string {
+  const key = base32Decode(secret);
+  const counterBuffer = Buffer.alloc(8);
+  counterBuffer.writeBigUInt64BE(BigInt(counter));
+  const hmac = crypto.createHmac('sha1', key).update(counterBuffer).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const code = (
+    ((hmac[offset] & 0x7f) << 24)
+    | ((hmac[offset + 1] & 0xff) << 16)
+    | ((hmac[offset + 2] & 0xff) << 8)
+    | (hmac[offset + 3] & 0xff)
+  ) % 10 ** digits;
+
+  return String(code).padStart(digits, '0');
+}
+
+function verifyTotp(secret: string, otp: string, window = 1): boolean {
+  const nowCounter = Math.floor(Date.now() / 1000 / 30);
+  for (let offset = -window; offset <= window; offset += 1) {
+    if (computeTotp(secret, nowCounter + offset) === otp) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getPendingMfaEnrollment(userId: number): StoredMfaEnrollmentRow | undefined {
+  return db.prepare('SELECT * FROM app_mfa_enrollment WHERE user_id = ?').get(userId) as StoredMfaEnrollmentRow | undefined;
+}
+
+export function getMfaStatus(userId: number): {
+  required: boolean;
+  enabled: boolean;
+  pendingEnrollment: boolean;
+} {
+  const user = getRequiredUserById(userId);
+  return {
+    required: Boolean(user.mfa_required),
+    enabled: Boolean(user.mfa_enabled_at && user.mfa_secret_encrypted),
+    pendingEnrollment: Boolean(getPendingMfaEnrollment(userId)),
+  };
+}
+
+export function beginMfaEnrollment(userId: number, issuer = 'Social Agent'): {
+  secret: string;
+  otpauthUrl: string;
+} {
+  const user = getRequiredUserById(userId);
+  if (user.disabled) {
+    forbidden('Account is disabled', 'ACCOUNT_DISABLED');
+  }
+
+  const secret = base32Encode(crypto.randomBytes(20));
+  db.prepare(`
+    INSERT INTO app_mfa_enrollment (user_id, secret_encrypted, created_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      secret_encrypted = excluded.secret_encrypted,
+      created_at = excluded.created_at
+  `).run(userId, encryptString(secret), nowIso());
+
+  const label = encodeURIComponent(`${issuer}:${user.email}`);
+  const otpauthUrl = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&digits=6&period=30`;
+  return { secret, otpauthUrl };
+}
+
+export function enableMfa(userId: number, otp: string): void {
+  const user = getRequiredUserById(userId);
+  const pending = getPendingMfaEnrollment(userId);
+  if (!pending) {
+    badRequest('MFA enrollment has not been started', 'MFA_NOT_STARTED');
+  }
+
+  const secret = decryptString(pending.secret_encrypted);
+  if (!secret || !verifyTotp(secret, otp)) {
+    unauthorized('Invalid MFA code', 'INVALID_MFA_CODE');
+  }
+
+  db.prepare(`
+    UPDATE app_users
+    SET
+      mfa_required = 1,
+      mfa_secret_encrypted = ?,
+      mfa_enabled_at = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(encryptString(secret), nowIso(), nowIso(), userId);
+  db.prepare('DELETE FROM app_mfa_enrollment WHERE user_id = ?').run(userId);
+
+  if (user.role === 'viewer') {
+    db.prepare('UPDATE app_users SET mfa_required = 0 WHERE id = ?').run(userId);
+  }
+}
+
+export function disableMfa(userId: number, currentPassword: string, otp?: string): void {
+  const user = getRequiredUserById(userId);
+  if (!verifyPassword(currentPassword, user.password_hash)) {
+    unauthorized('Current password is incorrect', 'INVALID_CURRENT_PASSWORD');
+  }
+
+  if (user.mfa_secret_encrypted && user.mfa_enabled_at) {
+    const secret = decryptString(user.mfa_secret_encrypted);
+    if (!otp || !verifyTotp(secret, otp)) {
+      unauthorized('Invalid MFA code', 'INVALID_MFA_CODE');
+    }
+  }
+
+  db.prepare(`
+    UPDATE app_users
+    SET
+      mfa_secret_encrypted = NULL,
+      mfa_enabled_at = NULL,
+      updated_at = ?
+    WHERE id = ?
+  `).run(nowIso(), userId);
+
+  db.prepare('DELETE FROM app_mfa_enrollment WHERE user_id = ?').run(userId);
+  destroyAllSessionsForUser(userId);
+}
+
+export function verifyMfaSession(sessionToken: string, otp: string, userAgent?: string, ip?: string): NewSession {
+  const session = getSession(sessionToken);
+  if (!session) {
+    unauthorized('Authentication required', 'SESSION_NOT_FOUND');
+  }
+
+  if (session.mfaVerified) {
+    return {
+      token: session.sessionToken,
+      csrfToken: session.csrfToken,
+      user: session.user,
+      expiresAt: session.expiresAt,
+      mfaVerified: session.mfaVerified,
+    };
+  }
+
+  const user = getRequiredUserById(session.user.id);
+  const secretEncrypted = user.mfa_secret_encrypted;
+  if (!secretEncrypted) {
+    badRequest('MFA is not enabled for this account', 'MFA_NOT_ENABLED');
+  }
+
+  const secret = decryptString(secretEncrypted);
+  if (!verifyTotp(secret, otp)) {
+    unauthorized('Invalid MFA code', 'INVALID_MFA_CODE');
+  }
+
+  destroySession(sessionToken);
+  return createSessionForUser(toAuthUser(user), userAgent, ip, { mfaVerified: true });
+}
+
+export function listUsers(): AuthUser[] {
+  const rows = db.prepare(`
+    SELECT * FROM app_users
+    ORDER BY created_at ASC
+  `).all() as unknown as StoredUserRow[];
+  return rows.map(toAuthUser);
+}
+
+export function createUser(email: string, password: string, role: AppRole): AuthUser {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !normalizedEmail.includes('@')) {
+    badRequest('Valid email is required', 'INVALID_EMAIL');
+  }
+  assertPassword(password);
+  const nextRole = normalizeRole(role);
+
+  if (getUserByEmail(normalizedEmail)) {
+    conflict('User already exists', 'USER_EXISTS');
+  }
+
+  const createdAt = nowIso();
+  const result = db.prepare(`
+    INSERT INTO app_users (
+      email, role, password_hash, disabled, mfa_required, mfa_secret_encrypted, mfa_enabled_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, 0, ?, NULL, NULL, ?, ?)
+  `).run(normalizedEmail, nextRole, hashPassword(password), isPrivilegedRole(nextRole) ? 1 : 0, createdAt, createdAt);
+
+  return toAuthUser(getRequiredUserById(Number(result.lastInsertRowid)));
+}
+
+export function updateUser(userId: number, patch: {
+  role?: AppRole;
+  disabled?: boolean;
+}): AuthUser {
+  const current = getRequiredUserById(userId);
+  const nextRole = patch.role ? normalizeRole(patch.role) : (current.role as AppRole);
+  const disabled = patch.disabled ?? Boolean(current.disabled);
+  const mfaRequired = isPrivilegedRole(nextRole) ? 1 : 0;
+
+  db.prepare(`
+    UPDATE app_users
+    SET role = ?, disabled = ?, mfa_required = ?, updated_at = ?
+    WHERE id = ?
+  `).run(nextRole, disabled ? 1 : 0, mfaRequired, nowIso(), userId);
+
+  if (disabled) {
+    destroyAllSessionsForUser(userId);
+  }
+
+  return toAuthUser(getRequiredUserById(userId));
+}
+
+export function resetUserPassword(userId: number, nextPassword: string): void {
+  getRequiredUserById(userId);
+  assertPassword(nextPassword);
+  db.prepare('UPDATE app_users SET password_hash = ?, updated_at = ? WHERE id = ?')
+    .run(hashPassword(nextPassword), nowIso(), userId);
+  destroyAllSessionsForUser(userId);
 }
 
 export function getRuntimeSettings(): RuntimeSettings {
@@ -750,6 +1248,7 @@ export function getAuditLogs(limit = 100): AuditLogEntry[] {
   }));
 }
 
-export function getDbHealth(): { ok: boolean; path: string } {
-  return { ok: true, path: DB_FILE };
+export function getDbHealth(): { ok: boolean } {
+  db.prepare('SELECT 1').get();
+  return { ok: true };
 }

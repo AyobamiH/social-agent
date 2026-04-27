@@ -4,14 +4,12 @@ import config from '../config';
 
 import * as logger from './logger';
 
-import { fillEmptySlots, finalizePublishResult, hydrateQueuedItemForActivePlatforms } from './content-engine';
-import { publishQueuedItem } from './publish';
+import { runFetch, runPostSlot } from './automation-service';
 import { getMemoryStats, getSlotPost } from './store';
 import { getAutomationGate, getEnabledPlatformLabels } from './runtime-policy';
+import { startServer } from './server';
 
 import type { Slot } from './types';
-
-import './server';
 
 const SLOTS: Slot[] = [
   { id: 's1', cron: '0 5  * * *', label: '5:00 AM' },
@@ -29,9 +27,7 @@ function logAutomationGate(prefix: string): void {
     return;
   }
 
-  logger.warn(
-    `${prefix} | automation paused | ${gate.reasons.join(' | ')}`
-  );
+  logger.warn(`${prefix} | automation paused | ${gate.reasons.join(' | ')}`);
 }
 
 async function refresh(): Promise<void> {
@@ -41,9 +37,8 @@ async function refresh(): Promise<void> {
     return;
   }
 
-  logger.info(`=== Social Agent refresh — u/${config.REDDIT_USER} ===`);
-
-  const stats = await fillEmptySlots(SLOTS, logger);
+  logger.info(`=== Social Agent refresh | u/${config.REDDIT_USER} ===`);
+  const { stats } = await runFetch(SLOTS, { source: 'cron' }, logger);
   const memory = getMemoryStats();
 
   logger.info(
@@ -64,32 +59,27 @@ async function fireSlot(slot: Slot): Promise<void> {
 
   const item = getSlotPost(slot.id);
   if (!item) {
-    logger.warn(`${slot.label} slot empty — skipping`);
+    logger.warn(`${slot.label} slot empty | skipping`);
     return;
   }
 
   const enabledLabels = getEnabledPlatformLabels();
   logger.info(
-    `Firing ${slot.label} — posting to ${enabledLabels.length ? enabledLabels.join(', ') : 'no enabled platforms'}`
+    `Firing ${slot.label} | posting to ${enabledLabels.length ? enabledLabels.join(', ') : 'no enabled platforms'}`
   );
 
-  const hydratedItem = await hydrateQueuedItemForActivePlatforms(slot.id, item, logger);
-  const result = await publishQueuedItem(hydratedItem, logger);
-  finalizePublishResult(slot, hydratedItem, result);
+  const result = await runPostSlot(slot, { source: 'cron' }, logger);
 
-  if (result.completed) {
-    logger.info(
-      `${slot.label} posted successfully${result.activePlatforms.length ? ` to ${result.activePlatforms.join(', ')}` : ''}`
-    );
+  if (result.success) {
+    logger.info(`${slot.label} posted successfully`);
   } else {
-    logger.warn(
-      `${slot.label} retained in queue for retry — pending: ${result.pendingPlatforms.join(', ')}`
-    );
+    logger.warn(`${slot.label} retained in queue for retry | pending:${result.pendingPlatforms.join(', ')}`);
   }
 }
 
 async function start(): Promise<void> {
-  logger.info('Social Agent starting...');
+  logger.info('Social Agent starting');
+  startServer();
   logAutomationGate('Startup status');
 
   cron.schedule('30 4 * * *', () => {
@@ -105,12 +95,11 @@ async function start(): Promise<void> {
   }
 
   await refresh();
-
-  logger.info(`Social Agent running. Dashboard/API → http://localhost:${config.GUI_PORT}`);
+  logger.info(`Social Agent running | dashboard/api http://localhost:${config.GUI_PORT}`);
 }
 
 void start().catch(error => {
   const message = error instanceof Error ? error.message : String(error);
-  logger.error('Fatal: ' + message);
+  logger.error(`Fatal: ${message}`);
   process.exit(1);
 });
