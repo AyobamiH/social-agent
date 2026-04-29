@@ -37,12 +37,6 @@ interface XVerifyCredentialsResponse extends XApiErrorResponse {
   screen_name?: string;
 }
 
-interface XStatusUpdateResponse extends XApiErrorResponse {
-  id?: string | number;
-  id_str?: string;
-  text?: string;
-}
-
 export interface XOAuth2TokenSet {
   accessToken: string;
   refreshToken?: string;
@@ -86,8 +80,8 @@ function hasOAuth2RefreshConfig(): boolean {
 
 export function getConfiguredAuthMode(): XAuthMode {
   if (hasOAuth2RefreshConfig()) return 'oauth2-user';
-  if (hasOAuth1Config()) return 'oauth1-user';
   if (hasOAuth2Config()) return 'oauth2-user';
+  if (hasOAuth1Config()) return 'oauth1-user';
   return 'unconfigured';
 }
 
@@ -116,6 +110,7 @@ export function classifyXError(message: string): XErrorKind {
     || normalized.includes('oauth 2.0 application-only')
     || normalized.includes('could not authenticate you')
     || normalized.includes('invalid or expired token')
+    || normalized === 'unauthorized'
   ) {
     return 'auth';
   }
@@ -239,11 +234,35 @@ async function apiRequestWithAuth<T>(
     throw new Error('X auth not configured');
   }
 
-  const token = authMode === 'oauth2-user'
-    ? await getUsableOAuth2AccessToken()
+  let token = authMode === 'oauth2-user'
+    ? await getInitialOAuth2AccessToken()
     : undefined;
 
-  return requestJson<T & XApiErrorResponse>(`https://api.x.com${path}`, {
+  let response = await sendApiRequest<T>(method, path, authMode, payload, token);
+  if (
+    authMode === 'oauth2-user'
+    && hasOAuth2RefreshConfig()
+    && classifyXError(response.message) === 'auth'
+  ) {
+    token = await refreshAndPersistOAuth2AccessToken();
+    response = await sendApiRequest<T>(method, path, authMode, payload, token);
+  }
+
+  if (response.status >= 400 || response.data.errors || response.data.error || response.data.detail) {
+    throw new Error('X API: ' + response.message);
+  }
+
+  return response.data;
+}
+
+async function sendApiRequest<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  authMode: Exclude<XAuthMode, 'unconfigured'>,
+  payload?: string,
+  token?: string
+): Promise<{ status: number; data: T & XApiErrorResponse; message: string }> {
+  const { status, data } = await requestJson<T & XApiErrorResponse>(`https://api.x.com${path}`, {
     method,
     headers: {
       'Authorization': authMode === 'oauth1-user'
@@ -253,20 +272,30 @@ async function apiRequestWithAuth<T>(
     },
     ...(payload ? { body: payload } : {}),
     timeoutMs: config.HTTP_TIMEOUT_MS,
-  }).then(({ status, data }) => {
-    if (status >= 400 || data.errors || data.error || data.detail) {
-      throw new Error('X API: ' + getErrorMessage(data, status));
-    }
-    return data;
   });
+
+  return {
+    status,
+    data,
+    message: getErrorMessage(data, status),
+  };
 }
 
-async function getUsableOAuth2AccessToken(): Promise<string> {
-  if (hasOAuth2RefreshConfig()) {
-    const tokens = await refreshOAuth2AccessToken(config.X_OAUTH2_REFRESH_TOKEN);
-    persistOAuth2Tokens(tokens);
+async function getInitialOAuth2AccessToken(): Promise<string> {
+  if (config.X_OAUTH2_ACCESS_TOKEN) {
+    return config.X_OAUTH2_ACCESS_TOKEN;
   }
 
+  if (hasOAuth2RefreshConfig()) {
+    return refreshAndPersistOAuth2AccessToken();
+  }
+
+  return getOAuth2AccessToken();
+}
+
+async function refreshAndPersistOAuth2AccessToken(): Promise<string> {
+  const tokens = await refreshOAuth2AccessToken(config.X_OAUTH2_REFRESH_TOKEN);
+  persistOAuth2Tokens(tokens);
   return getOAuth2AccessToken();
 }
 
@@ -306,27 +335,11 @@ export async function publish(text: string): Promise<string> {
     throw new Error('X post text exceeds 280 characters');
   }
 
-  if (getConfiguredAuthMode() === 'oauth2-user') {
-    const response = await apiRequest<XPublishResponse>('POST', '/2/tweets', { text: trimmed });
-    if (!response.data?.id) {
-      throw new Error('X API: publish response returned no tweet id');
-    }
-    return response.data.id;
+  const response = await apiRequest<XPublishResponse>('POST', '/2/tweets', { text: trimmed });
+  if (!response.data?.id) {
+    throw new Error('X API: publish response returned no tweet id');
   }
-
-  if (getConfiguredAuthMode() === 'oauth1-user') {
-    const response = await apiRequest<XStatusUpdateResponse>(
-      'POST',
-      `/1.1/statuses/update.json?status=${encodeOAuthComponent(trimmed)}`
-    );
-    const id = String(response.id_str || response.id || '');
-    if (!id) {
-      throw new Error('X API: status update response returned no tweet id');
-    }
-    return id;
-  }
-
-  throw new Error('X auth not configured');
+  return response.data.id;
 }
 
 export function buildOAuth2AuthorizationUrl(state: string, codeChallenge: string, redirectUri = config.X_REDIRECT_URI): string {
@@ -367,6 +380,7 @@ export async function exchangeOAuth2Code(
     code,
     redirect_uri: redirectUri,
     code_verifier: codeVerifier,
+    client_id: config.X_CLIENT_ID,
   });
 
   return requestOAuth2Token(body);
@@ -376,24 +390,30 @@ export async function refreshOAuth2AccessToken(refreshToken: string): Promise<XO
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
+    client_id: config.X_CLIENT_ID,
   });
 
   return requestOAuth2Token(body);
 }
 
 async function requestOAuth2Token(body: URLSearchParams): Promise<XOAuth2TokenSet> {
-  const { status, data } = await requestJson<XOAuth2TokenResponse>('https://api.x.com/2/oauth2/token', {
-    method: 'POST',
-    headers: {
-      'Authorization': getOAuth2ClientBasicAuth(),
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: body.toString(),
-    timeoutMs: config.HTTP_TIMEOUT_MS,
-  });
+  let { status, data } = await requestOAuth2TokenRequest(body, true);
+  let message = getErrorMessage(data, status);
+
+  if ((status >= 400 || data.errors || data.error || data.detail || !data.access_token) && message === 'unauthorized_client') {
+    ({ status, data } = await requestOAuth2TokenRequest(body, false));
+    message = getErrorMessage(data, status);
+  }
+
+  if ((status >= 400 || data.errors || data.error || data.detail || !data.access_token) && message === 'unauthorized_client') {
+    const bodyWithSecret = new URLSearchParams(body);
+    bodyWithSecret.set('client_secret', config.X_CLIENT_SECRET);
+    ({ status, data } = await requestOAuth2TokenRequest(bodyWithSecret, false));
+    message = getErrorMessage(data, status);
+  }
 
   if (status >= 400 || data.errors || data.error || data.detail || !data.access_token) {
-    throw new Error('X OAuth2: ' + getErrorMessage(data, status));
+    throw new Error('X OAuth2: ' + message);
   }
 
   return {
@@ -403,6 +423,21 @@ async function requestOAuth2Token(body: URLSearchParams): Promise<XOAuth2TokenSe
     scope: data.scope,
     tokenType: data.token_type,
   };
+}
+
+function requestOAuth2TokenRequest(
+  body: URLSearchParams,
+  useClientSecret: boolean
+): Promise<{ status: number; data: XOAuth2TokenResponse }> {
+  return requestJson<XOAuth2TokenResponse>('https://api.x.com/2/oauth2/token', {
+    method: 'POST',
+    headers: {
+      ...(useClientSecret ? { 'Authorization': getOAuth2ClientBasicAuth() } : {}),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
+    timeoutMs: config.HTTP_TIMEOUT_MS,
+  });
 }
 
 export function persistOAuth2Tokens(tokens: XOAuth2TokenSet): void {

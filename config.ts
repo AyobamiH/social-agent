@@ -145,8 +145,8 @@ function buildBaseConfig(): AppConfig {
     X_ACCESS_TOKEN_SECRET: process.env.X_ACCESS_TOKEN_SECRET || '',
     X_OAUTH2_ACCESS_TOKEN: process.env.X_OAUTH2_ACCESS_TOKEN || '',
     X_OAUTH2_REFRESH_TOKEN: process.env.X_OAUTH2_REFRESH_TOKEN || '',
-    X_CLIENT_ID: process.env.X_CLIENT_ID || '',
-    X_CLIENT_SECRET: process.env.X_CLIENT_SECRET || '',
+    X_CLIENT_ID: process.env.X_CLIENT_ID || process.env.X_OAUTH2_CLIENT_ID || '',
+    X_CLIENT_SECRET: process.env.X_CLIENT_SECRET || process.env.X_OAUTH2_CLIENT_SECRET || '',
     X_REDIRECT_URI: process.env.X_REDIRECT_URI || `http://127.0.0.1:${process.env.GUI_PORT || '4001'}/auth/x/callback`,
     THREADS_ACCESS_TOKEN:
       process.env.THREADS_ACCESS_TOKEN ||

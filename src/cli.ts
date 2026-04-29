@@ -1,5 +1,11 @@
+import { stdin as input, stdout as output } from 'node:process';
+
+import { reloadRuntimeConfigFromStorage } from '../config';
+
+import { updateRuntimeSecrets } from './control-plane';
 import * as logger from './logger';
 import * as store from './store';
+import * as x from './x';
 
 import { runFetch, runPostAll } from './automation-service';
 
@@ -13,6 +19,71 @@ const SLOTS: Slot[] = [
 ];
 
 const cmd = process.argv[2];
+
+function readHidden(prompt: string): Promise<string> {
+  if (!input.isTTY) {
+    return new Promise(resolve => {
+      let value = '';
+      input.setEncoding('utf8');
+      input.on('data', chunk => {
+        value += chunk;
+      });
+      input.on('end', () => {
+        resolve(value.split(/\r?\n/)[0]?.trim() || '');
+      });
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    let value = '';
+    const wasRaw = input.isRaw;
+
+    function cleanup(): void {
+      input.off('data', onData);
+      input.setRawMode(wasRaw);
+      input.pause();
+    }
+
+    function onData(buffer: Buffer): void {
+      const chunk = buffer.toString('utf8');
+      for (const char of chunk) {
+        if (char === '\u0003') {
+          cleanup();
+          output.write('\n');
+          reject(new Error('Canceled'));
+          return;
+        }
+        if (char === '\r' || char === '\n') {
+          cleanup();
+          output.write('\n');
+          resolve(value.trim());
+          return;
+        }
+        if (char === '\u007f' || char === '\b') {
+          value = value.slice(0, -1);
+          continue;
+        }
+        value += char;
+      }
+    }
+
+    output.write(prompt);
+    input.setEncoding('utf8');
+    input.setRawMode(true);
+    input.resume();
+    input.on('data', onData);
+  });
+}
+
+async function readSecret(key: string, prompt: string): Promise<string> {
+  const fromEnv = process.env[key]?.trim();
+  if (fromEnv) return fromEnv;
+  const value = await readHidden(prompt);
+  if (!value) {
+    throw new Error(`${key} is required`);
+  }
+  return value;
+}
 
 async function main(): Promise<void> {
   switch (cmd) {
@@ -105,6 +176,22 @@ async function main(): Promise<void> {
       break;
     }
 
+    case 'import-x-oauth2': {
+      const accessToken = await readSecret('X_OAUTH2_ACCESS_TOKEN', 'X OAuth 2.0 access token: ');
+      const refreshToken = await readSecret('X_OAUTH2_REFRESH_TOKEN', 'X OAuth 2.0 refresh token: ');
+
+      updateRuntimeSecrets({
+        X_OAUTH2_ACCESS_TOKEN: accessToken,
+        X_OAUTH2_REFRESH_TOKEN: refreshToken,
+      });
+      reloadRuntimeConfigFromStorage();
+
+      const me = await x.getAuthenticatedUser();
+      store.clearPlatformPublishBlocked('x');
+      console.log(`Saved X OAuth 2.0 user tokens for ${me.username ? '@' + me.username : me.name || me.id}.`);
+      break;
+    }
+
     case 'post-now': {
       logger.info('Manual post-now triggered');
       const { results } = await runPostAll(SLOTS, { source: 'cli' }, logger);
@@ -132,6 +219,7 @@ Social Agent CLI
   npm run history    Last 5 posting batches
   npm run post-now   Post all slots immediately
   npm run memory     Show source and angle inventory
+  npm run import-x-oauth2  Save X OAuth 2.0 user tokens from the X portal
   npm start          Start agent (cron + dashboard)
       `);
   }

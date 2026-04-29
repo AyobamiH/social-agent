@@ -17,7 +17,8 @@ Maintainer context for humans and coding agents lives in `AGENTS.md`.
 
 - The runtime is now TS-first with a split model: `tsx` for source-driven dev tooling and compiled `dist/` output for the production service.
 - X is now a first-class platform in the content model, queue, history, API, dashboard, and publish flow.
-- X v1 is text-only and single-post only.
+- X is text-only in this runtime and posts through `POST /2/tweets`.
+- X live-post smoke testing is confirmed working with OAuth 2.0 user-context credentials as of April 29, 2026.
 - The content engine banks source summaries plus reusable angles so one Reddit source can support multiple future posts.
 
 Tracked default profile:
@@ -68,17 +69,7 @@ The LinkedIn publisher uses the UGC Posts API and is text-only.
 
 ### X / Twitter
 
-Set:
-
-```env
-ENABLE_X=true
-X_API_KEY=...
-X_API_SECRET=...
-X_ACCESS_TOKEN=...
-X_ACCESS_TOKEN_SECRET=...
-```
-
-or:
+Set OAuth 2.0 user-context credentials:
 
 ```env
 ENABLE_X=true
@@ -89,13 +80,26 @@ X_CLIENT_SECRET=...
 X_REDIRECT_URI=http://127.0.0.1:4001/auth/x/callback
 ```
 
+`X_OAUTH2_CLIENT_ID` and `X_OAUTH2_CLIENT_SECRET` are also accepted aliases for the labels shown in the X developer portal.
+
+OAuth 1.0a user-context credentials are still supported:
+
+```env
+ENABLE_X=true
+X_API_KEY=...
+X_API_SECRET=...
+X_ACCESS_TOKEN=...
+X_ACCESS_TOKEN_SECRET=...
+```
+
 Notes:
-- Preferred path is OAuth 1.0a user-context credentials plus the legacy v1.1 user endpoints.
-- OAuth 2.0 user-context posting is supported through the dashboard connect flow at `/auth/x/start` when `X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_REDIRECT_URI` are configured.
-- A real OAuth 2.0 user access token is supported as fallback; app-only bearer tokens are not.
-- App-only bearer tokens and OAuth client secrets are not used for posting.
+- Preferred path is OAuth 2.0 user-context credentials with an access token, refresh token, client ID, and client secret from the same X app.
+- OAuth 2.0 user-context posting is supported through the dashboard connect flow at `/auth/x/start` or by importing portal-generated tokens with `npm run import-x-oauth2`.
+- OAuth 1.0a user-context auth also posts through `POST /2/tweets`.
+- App-only bearer tokens are not valid for posting.
 - Validate the token with `npm run test-x`.
 - Publish a deliberate live smoke test with `npm run test-x -- --live-post`.
+- The latest confirmed live smoke test posted as `@JohnWOE15`: `https://x.com/i/web/status/2049570569494958455`.
 - If auth passes but publish is rejected by X for credits or access tier, the app automatically keeps X in draft-only mode for a cooldown window so other platforms can continue publishing.
 
 ### Threads / Instagram / Facebook
@@ -154,6 +158,7 @@ Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 | `npm run post-now` | Publish queued slots immediately |
 | `npm run test-meta` | Diagnose Meta credentials and linked assets |
 | `npm run test-x` | Validate X auth and optionally live-post a test update |
+| `npm run import-x-oauth2` | Import X OAuth 2.0 user-context tokens generated in the X developer portal |
 | `npm run test` | Run the local security hardening regression suite |
 | `npm run backup` | Snapshot `APP_DATA_DIR` into `backups/` |
 | `npm run restore -- --from <backup-dir>` | Restore a backup into `APP_DATA_DIR` |
@@ -163,7 +168,7 @@ Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 
 - Draft generation skips disabled platforms to protect token spend.
 - Existing queued items can auto-hydrate missing X drafts from stored source and angle memory when X is enabled later.
-- X can authenticate successfully and still be blocked from posting by X credits or access tier; in that case the runtime falls back to draft-only mode for X.
+- X is confirmed working with the current OAuth 2.0 user-context app; if X later rejects publishing for credits or access tier, the runtime falls back to draft-only mode for X.
 - Instagram image generation only runs when Instagram is enabled, and generated images are uploaded to Cloudinary so queued posts do not rely on temporary DALL-E URLs.
 - Failed platforms no longer force the whole queue item to disappear.
 - Partial success is supported, so one platform can succeed while another is retained for retry.

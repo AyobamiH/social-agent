@@ -75,7 +75,7 @@ Platform-specific verification remains intentionally differentiated:
 
 - Threads posting is confirmed working.
 - Instagram posting is confirmed working against the currently accessible linked account path.
-- X is integrated and auth has been validated, but live posting may still be limited by X credits/access entitlement.
+- X is integrated and live posting is confirmed with OAuth 2.0 user-context credentials. The April 29, 2026 smoke test posted as `@JohnWOE15`: `https://x.com/i/web/status/2049570569494958455`.
 - LinkedIn code is present but still needs a live post validation from this repository.
 - Facebook Group posting remains permission-dependent and is not positioned as a proven path.
 
@@ -107,8 +107,8 @@ These are real limitations, but they are not the same as pilot blockers in the c
 - The deployment model is single-node rather than HA/distributed.
 - Observability is serviceable for pilot operations, but not yet a full metrics-and-tracing stack.
 - Provider maturity is uneven across channels:
-  - Threads and Instagram are the proven live path
-  - X publish capability can still be constrained by provider entitlement
+  - Threads, Instagram, and X are the proven live paths
+  - X publish capability can still regress if provider entitlement, app permissions, credits, or token state change
   - LinkedIn still needs a live validation run from this repo
   - Facebook remains the weakest operational slice
 

@@ -68,14 +68,14 @@ This repo is authored in TypeScript with a split execution model: `tsx` for sour
 
 ## Current Platform State
 
-As of April 27, 2026:
+As of April 29, 2026:
 
 - Threads posting is confirmed working.
 - Instagram posting is confirmed working against the currently accessible Page-linked account.
 - LinkedIn code has been merged from `linkedin-agent-v4`, but this repo has not yet live-posted to LinkedIn.
-- X is implemented as a first-class text-only platform, with live auth verified through OAuth 1.0a user-context.
-- X OAuth 2.0 connect, callback, token persistence, and refresh-token support are implemented in `src/x.ts` and exposed through `/auth/x/start` and `/auth/x/callback`.
-- X live publishing may still be blocked by X credits or access tier even when auth succeeds.
+- X is implemented as a first-class text-only platform and live posting is confirmed working with OAuth 2.0 user-context credentials.
+- X OAuth 2.0 connect, callback, token persistence, refresh-token support, and portal-token import are implemented in `src/x.ts`, `src/server.ts`, and `src/cli.ts`.
+- X live-post smoke test succeeded as `@JohnWOE15` on April 29, 2026: `https://x.com/i/web/status/2049570569494958455`.
 - Threads now uses its own token path through `THREADS_ACCESS_TOKEN`.
 - Threads uses `/me`, `/me/threads`, and `/me/threads_publish` on `graph.threads.net`.
 - Facebook/Instagram Graph defaults were bumped to `v25.0`.
@@ -103,7 +103,7 @@ This was done because:
 
 - Threads and Instagram are both confirmed working.
 - LinkedIn has been merged but not yet verified from this repo.
-- X is integrated but should stay off until a valid OAuth 1.0a or OAuth 2.0 user-context credential set is configured and tested.
+- X remains off in the tracked example config, but live posting is confirmed when valid OAuth 2.0 user-context credentials are configured.
 - The Facebook Group still returns `(#3) Missing Permission`.
 
 ## Meta Config Notes
@@ -128,15 +128,17 @@ Do not commit real secrets from `.env`.
 
 ## X Config Notes
 
-- Prefer `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, and `X_ACCESS_TOKEN_SECRET` for OAuth 1.0a user-context publishing.
-- `X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_REDIRECT_URI` support the OAuth 2.0 user-context connect flow.
+- Prefer OAuth 2.0 user-context credentials for X publishing: `X_OAUTH2_ACCESS_TOKEN`, `X_OAUTH2_REFRESH_TOKEN`, and either `X_CLIENT_ID`/`X_CLIENT_SECRET` or the X-portal label aliases `X_OAUTH2_CLIENT_ID`/`X_OAUTH2_CLIENT_SECRET`.
+- `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, and `X_ACCESS_TOKEN_SECRET` remain supported for OAuth 1.0a user-context auth.
+- `X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_REDIRECT_URI` support the OAuth 2.0 user-context connect flow. `X_OAUTH2_CLIENT_ID` and `X_OAUTH2_CLIENT_SECRET` are accepted aliases for the labels used in the X developer portal.
 - `X_OAUTH2_ACCESS_TOKEN` and `X_OAUTH2_REFRESH_TOKEN` are supported for v2 posting after OAuth connect.
-- Do not use app-only bearer tokens or OAuth client secrets for posting.
+- Do not use app-only bearer tokens for posting.
 - X publishing is text-only.
-- Auth mode priority in `src/x.ts` is OAuth 2.0 refresh-token config, then OAuth 1.0a credentials, then a static OAuth 2.0 access token.
-- The OAuth 1.0a path authenticates with `account/verify_credentials` and posts through `/1.1/statuses/update.json`.
+- Auth mode priority in `src/x.ts` is OAuth 2.0 refresh-token config, then a static OAuth 2.0 access token, then OAuth 1.0a credentials.
+- The OAuth 1.0a path authenticates with `account/verify_credentials` and posts through `/2/tweets`.
 - The OAuth 2.0 path authenticates with `/2/users/me` and posts through `/2/tweets`.
 - The dashboard owner route `/auth/x/start` begins the OAuth 2.0 flow, and `/auth/x/callback` persists the returned access and refresh tokens into runtime secrets.
+- `npm run import-x-oauth2` imports user-context OAuth 2.0 access/refresh tokens generated directly in the X developer portal, saves them into encrypted runtime secrets, validates `/2/users/me`, and only then clears X draft-only mode.
 - Queued publishing in `src/publish.ts` only attempts X when OAuth 1.0a credentials or `X_OAUTH2_ACCESS_TOKEN` are present. After OAuth 2.0 connect succeeds, the persisted access token satisfies this requirement.
 - If X returns a credits/access-tier publish entitlement error, the runtime switches X into temporary draft-only mode.
 
@@ -178,6 +180,7 @@ The npm scripts set `TMPDIR`, `TEMP`, and `TMP` to `/tmp` for `tsx` commands so 
 - `npm run memory`: inspect source/angle memory counts
 - `npm run history`: inspect recent publish history
 - `npm run post-now`: immediately post every queued slot to enabled platforms
+- `npm run import-x-oauth2`: import X OAuth 2.0 user-context tokens generated in the X developer portal
 - `npm run backup`: snapshot `APP_DATA_DIR` into `backups/`
 - `npm run restore -- --from <backup-dir>`: restore a backup into `APP_DATA_DIR`
 - `npm run smoke:dist`: verify the compiled CLI/runtime wiring
@@ -215,7 +218,7 @@ These files are runtime state, not source code.
 
 - Instagram posting depends on the currently accessible Page continuing to expose the linked `instagram_business_account`.
 - LinkedIn posting still needs a live validation run from this repo even though the publish slice was ported from a working standalone project.
-- X posting depends on a valid user-context credential set and sufficient X credits/access tier for the publish endpoint.
+- X posting is confirmed for the current OAuth 2.0 user-context app, but future failures can still happen if credentials expire, the X app permissions change, or credits/access tier are removed.
 - Facebook Group posting still depends on app/token/group permissions that are not fixed in code.
 - DALL-E image URLs are temporary. If an Instagram slot sits too long before posting, the image URL may expire.
 - Cloudinary should be configured for Instagram queues so DALL-E URLs are copied to a stable delivery URL immediately after generation.

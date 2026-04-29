@@ -21,6 +21,7 @@
     "memory": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx src/cli.ts memory",
     "history": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx src/cli.ts history",
     "post-now": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx src/cli.ts post-now",
+    "import-x-oauth2": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx src/cli.ts import-x-oauth2",
     "test-meta": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx src/test-meta.ts",
     "test-x": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx src/test-x.ts"
   },

@@ -58,13 +58,14 @@ Control-plane state:
 - optional `data/control-plane.key`
 
 Automation state:
+- `data/automation.sqlite`
 - `data/queue.json`
 - `data/history.json`
 - `data/sources.json`
 - `data/angles.json`
 - `data/used_ids.json`
 - `data/agent.log`
-- `data/platform-state.json`
+- `data/platform-state.json` if present as legacy runtime artifact/import source
 
 ### End-to-end flow
 
@@ -200,7 +201,7 @@ Global behavior:
   - `billing`
 - notes:
   - runtime platform toggles now include `ENABLE_X`
-  - secret presence may include `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, and `X_OAUTH2_ACCESS_TOKEN`
+  - secret presence may include `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_OAUTH2_ACCESS_TOKEN`, `X_OAUTH2_REFRESH_TOKEN`, `X_CLIENT_ID`, and `X_CLIENT_SECRET`
 
 #### `PUT /api/settings/runtime`
 - auth: session + CSRF
@@ -267,7 +268,7 @@ Automation gate means:
 - notes:
   - `config.platforms` includes `x`
   - queue items may include `post.x`, `post.ids.x`, and `post.publishErrors.x`
-  - X publish capability can also be tracked locally in `data/platform-state.json` when provider entitlement blocks live posting
+  - X publish capability is tracked in the SQLite platform-state store when provider entitlement blocks live posting
 
 #### `GET /api/queue`
 - auth: session
@@ -400,7 +401,7 @@ Not implemented:
 - `SourceRecord`
 - `AngleRecord`
 
-These still live in JSON-backed store files and are described in `src/types.ts`.
+These live in the SQLite-backed automation store, with legacy JSON files retained only as import/runtime artifacts if present. Shape definitions are described in `src/types.ts`.
 
 ## 6. Gaps and Risks
 
@@ -410,9 +411,9 @@ These still live in JSON-backed store files and are described in `src/types.ts`.
 - no email verification
 - no request rate limiting
 - `PUT /api/slot` is still weakly validated
-- queue/history/source/angle state is still file-backed, not transactional
+- queue/history/source/angle/platform-state data is SQLite-backed, but broader cross-process operational guarantees are still single-node oriented
 - `node:sqlite` is still an experimental Node module
-- no background job locking across cron and API writes
+- no distributed background job locking beyond the current SQLite automation lock layer
 
 ### Operational notes
 
@@ -422,7 +423,8 @@ These still live in JSON-backed store files and are described in `src/types.ts`.
 - X readiness requires `ENABLE_X=true` plus either:
   - `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, and `X_ACCESS_TOKEN_SECRET`
   - or `X_OAUTH2_ACCESS_TOKEN`
-- Even when X auth is valid, live publish can still fail at the provider due to credits or access tier. The runtime can temporarily mark X as draft-only in `data/platform-state.json`.
+- The preferred X path is OAuth 2.0 user-context credentials. Portal-generated tokens can be imported with `npm run import-x-oauth2`; dashboard OAuth still starts at `/auth/x/start`.
+- Even when X auth is valid, live publish can still fail at the provider due to credits or access tier changes. The runtime can temporarily mark X as draft-only in the SQLite platform-state store.
 
 ## 7. Build-Ready Summary
 
