@@ -1,6 +1,12 @@
 import config from '../config';
 
-import { canAccessAutomation, getBillingState, hasUsers } from './control-plane';
+import {
+  canAccessAutomation,
+  getBillingState,
+  getBillingStateSnapshot,
+  hasUsers,
+  isLocalDevBillingBypassActive,
+} from './control-plane';
 
 export interface RuntimeReadiness {
   ready: boolean;
@@ -13,6 +19,8 @@ export interface AutomationGate {
   reasons: string[];
   readiness: RuntimeReadiness;
   billing: ReturnType<typeof getBillingState>;
+  billingAccessActive: boolean;
+  localBillingBypassActive: boolean;
   hasOwner: boolean;
 }
 
@@ -97,7 +105,11 @@ export function getRuntimeReadiness(): RuntimeReadiness {
 
 export function getAutomationGate(): AutomationGate {
   const readiness = getRuntimeReadiness();
-  const billing = getBillingState();
+  const localBillingBypassActive = isLocalDevBillingBypassActive();
+  const billing = localBillingBypassActive
+    ? getBillingStateSnapshot()
+    : getBillingState();
+  const billingAccessActive = canAccessAutomation();
   const ownerReady = hasUsers();
   const reasons: string[] = [];
 
@@ -105,7 +117,7 @@ export function getAutomationGate(): AutomationGate {
     reasons.push('Owner account has not been bootstrapped');
   }
 
-  if (!billing.accessActive) {
+  if (!billingAccessActive) {
     reasons.push(
       billing.lockedReason
         || `Billing status ${billing.status} does not allow automation`
@@ -116,15 +128,17 @@ export function getAutomationGate(): AutomationGate {
     reasons.push(`Runtime is missing: ${readiness.missing.join(', ')}`);
   }
 
-  if (!canAccessAutomation() && billing.accessActive) {
+  if (!billingAccessActive && billing.accessActive) {
     reasons.push('Automation access is disabled');
   }
 
   return {
-    allowed: ownerReady && billing.accessActive && readiness.ready,
+    allowed: ownerReady && billingAccessActive && readiness.ready,
     reasons,
     readiness,
     billing,
+    billingAccessActive,
+    localBillingBypassActive,
     hasOwner: ownerReady,
   };
 }

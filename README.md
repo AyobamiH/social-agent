@@ -53,6 +53,34 @@ pm2 save && pm2 startup
 - Runtime state now lives primarily in `data/automation.sqlite` and `data/control-plane.sqlite`.
 - The build copies `public/` and `content-os/` into `dist/` so the compiled runtime stays self-contained.
 
+## OneClickPostFactory SaaS worker mode
+
+For the hosted OneClickPostFactory app, this repo also runs as a headless worker against an owner-managed Supabase project.
+
+Flow:
+
+```text
+Lovable app -> Supabase agent_jobs -> social-agent worker -> Supabase tenant tables
+```
+
+The browser app must not call this backend directly. The worker polls `agent_jobs`, processes each job by `job.user_id`, checks entitlement from Supabase `profiles`, decrypts tenant credentials from `user_credentials`, and writes tenant-scoped results back to `queue_items`, `publish_history`, `source_records`, `angle_records`, and `worker_logs`.
+
+Required worker env:
+
+```env
+SUPABASE_URL=https://<your-owned-project-ref>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<sb_secret_... or legacy service_role JWT>
+CREDENTIAL_ENCRYPTION_KEY=<same-key-used-by-lovable-server-runtime>
+```
+
+Run only the worker loop with:
+
+```bash
+npm run worker:supabase
+```
+
+Local SQLite remains for local admin/dev control-plane state. It is not the SaaS tenant source of truth.
+
 ## Platform setup
 
 ### LinkedIn
@@ -159,6 +187,7 @@ Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 | `npm run test-meta` | Diagnose Meta credentials and linked assets |
 | `npm run test-x` | Validate X auth and optionally live-post a test update |
 | `npm run import-x-oauth2` | Import X OAuth 2.0 user-context tokens generated in the X developer portal |
+| `npm run worker:supabase` | Poll the owner-managed Supabase `agent_jobs` table and process SaaS tenant work |
 | `npm run test` | Run the local security hardening regression suite |
 | `npm run backup` | Snapshot `APP_DATA_DIR` into `backups/` |
 | `npm run restore -- --from <backup-dir>` | Restore a backup into `APP_DATA_DIR` |

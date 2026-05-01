@@ -45,6 +45,8 @@ export interface XOAuth2TokenSet {
   tokenType?: string;
 }
 
+type XOAuth2TokenPersistence = (tokens: XOAuth2TokenSet) => void | Promise<void>;
+
 interface XOAuth2TokenResponse extends XApiErrorResponse {
   access_token?: string;
   refresh_token?: string;
@@ -55,6 +57,8 @@ interface XOAuth2TokenResponse extends XApiErrorResponse {
 
 export type XAuthMode = 'oauth1-user' | 'oauth2-user' | 'unconfigured';
 export type XErrorKind = 'publish-access-tier' | 'project-required' | 'auth' | 'other';
+
+let persistOAuth2TokensHandler: XOAuth2TokenPersistence = persistOAuth2TokensToLocalRuntime;
 
 function encodeOAuthComponent(value: string): string {
   return encodeURIComponent(value)
@@ -295,7 +299,7 @@ async function getInitialOAuth2AccessToken(): Promise<string> {
 
 async function refreshAndPersistOAuth2AccessToken(): Promise<string> {
   const tokens = await refreshOAuth2AccessToken(config.X_OAUTH2_REFRESH_TOKEN);
-  persistOAuth2Tokens(tokens);
+  await persistOAuth2Tokens(tokens);
   return getOAuth2AccessToken();
 }
 
@@ -440,7 +444,7 @@ function requestOAuth2TokenRequest(
   });
 }
 
-export function persistOAuth2Tokens(tokens: XOAuth2TokenSet): void {
+function applyOAuth2TokensToConfig(tokens: XOAuth2TokenSet): Record<string, string> {
   const patch: Record<string, string> = {
     X_OAUTH2_ACCESS_TOKEN: tokens.accessToken,
   };
@@ -452,5 +456,23 @@ export function persistOAuth2Tokens(tokens: XOAuth2TokenSet): void {
     config.X_OAUTH2_REFRESH_TOKEN = tokens.refreshToken;
   }
 
+  return patch;
+}
+
+function persistOAuth2TokensToLocalRuntime(tokens: XOAuth2TokenSet): void {
+  const patch = applyOAuth2TokensToConfig(tokens);
   updateRuntimeSecrets(patch);
+}
+
+export function setOAuth2TokenPersistence(handler: XOAuth2TokenPersistence): () => void {
+  const previous = persistOAuth2TokensHandler;
+  persistOAuth2TokensHandler = handler;
+  return () => {
+    persistOAuth2TokensHandler = previous;
+  };
+}
+
+export async function persistOAuth2Tokens(tokens: XOAuth2TokenSet): Promise<void> {
+  applyOAuth2TokensToConfig(tokens);
+  await persistOAuth2TokensHandler(tokens);
 }

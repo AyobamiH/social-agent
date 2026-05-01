@@ -8,6 +8,7 @@ import { runFetch, runPostSlot } from './automation-service';
 import { getMemoryStats, getSlotPost } from './store';
 import { getAutomationGate, getEnabledPlatformLabels } from './runtime-policy';
 import { startServer } from './server';
+import { startSupabaseWorkerLoop } from './supabase-worker';
 
 import type { Slot } from './types';
 
@@ -20,14 +21,17 @@ const SLOTS: Slot[] = [
 
 function logAutomationGate(prefix: string): void {
   const gate = getAutomationGate();
+  const billingSuffix = gate.localBillingBypassActive
+    ? ' | LOCAL DEV BILLING BYPASS ACTIVE'
+    : '';
   if (gate.allowed) {
     logger.info(
-      `${prefix} | automation ready | platforms:${gate.readiness.enabledPlatforms.join(', ') || 'none'} | billing:${gate.billing.status}`
+      `${prefix} | automation ready | platforms:${gate.readiness.enabledPlatforms.join(', ') || 'none'} | billing:${gate.billing.status}${billingSuffix}`
     );
     return;
   }
 
-  logger.warn(`${prefix} | automation paused | ${gate.reasons.join(' | ')}`);
+  logger.warn(`${prefix} | automation paused | ${gate.reasons.join(' | ')}${billingSuffix}`);
 }
 
 async function refresh(): Promise<void> {
@@ -80,6 +84,7 @@ async function fireSlot(slot: Slot): Promise<void> {
 async function start(): Promise<void> {
   logger.info('Social Agent starting');
   startServer();
+  startSupabaseWorkerLoop(logger);
   logAutomationGate('Startup status');
 
   cron.schedule('30 4 * * *', () => {

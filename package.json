@@ -10,6 +10,7 @@
     "smoke:dist": "node dist/src/cli.js status",
     "ci": "npm run typecheck && npm run build && npm run smoke:dist && node dist/test/security-hardening.test.js",
     "dev": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx src/agent.ts",
+    "worker:supabase": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx src/supabase-worker.ts",
     "start": "node dist/src/agent.js",
     "start:pm2": "pm2 start dist/src/agent.js --name social-agent --restart-delay=5000",
     "deploy": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/deploy.ts",

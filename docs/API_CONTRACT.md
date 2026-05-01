@@ -20,15 +20,16 @@ What it does now:
 - supports first-class platform drafting and publishing for LinkedIn, Threads, X, Instagram, and Facebook
 - gates automation behind owner auth, billing status, and runtime readiness
 - stores legacy automation state in local JSON files
+- can also run a OneClickPostFactory SaaS worker loop that polls an owner-managed Supabase `agent_jobs` table and writes tenant-scoped results back by `job.user_id`
 
-What it still does not implement:
-- multi-tenant org/workspace model
+What it still does not implement in the local HTTP control plane:
+- multi-tenant org/workspace model for local SQLite API routes
 - multiple users or server-side role hierarchy beyond `owner`
 - email verification or password reset flow
 - OAuth callback flows for platform connection
 - inbound product webhooks other than Stripe billing
-- worker queue or distributed job system
-- database-backed replacement for queue/history/source/angle storage
+- distributed worker scaling beyond the Supabase `agent_jobs` polling loop
+- database-backed replacement for local queue/history/source/angle storage outside the SaaS worker path
 
 Primary code files:
 - `config.ts`
@@ -66,6 +67,12 @@ Automation state:
 - `data/used_ids.json`
 - `data/agent.log`
 - `data/platform-state.json` if present as legacy runtime artifact/import source
+
+SaaS worker state:
+- owned Supabase `agent_jobs`
+- owned Supabase `profiles`, `user_credentials`, `user_sources`, `user_settings`
+- owned Supabase `queue_items`, `publish_history`, `source_records`, `angle_records`, `worker_logs`
+- all SaaS reads/writes are scoped by `job.user_id`
 
 ### End-to-end flow
 

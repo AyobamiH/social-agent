@@ -143,15 +143,17 @@ What is implemented:
 
 ## Recommended Deployment Shape
 
-For the product direction discussed, the recommended deployment is:
+For the OneClickPostFactory SaaS direction, the recommended deployment is now:
 
-- one backend instance per paying customer
-- one isolated database / `data/` volume per customer
-- one isolated secret set per customer
-- one frontend deployment talking to one backend instance
-- Stripe manages subscription state; backend enforces access
+- one Lovable app deployment for the UI/control plane
+- one owner-managed Supabase project as the SaaS source of truth
+- Lovable browser code uses only Supabase URL + anon/publishable key
+- trusted server runtimes use service-role credentials only server-side
+- one local or hosted `social-agent` worker polls Supabase `agent_jobs`
+- every worker read/write is scoped by `job.user_id`
+- Stripe subscription state is stored in Supabase `profiles` and re-checked by the worker before automation/publishing
 
-This preserves the current single-tenant product decision while keeping clean isolation boundaries.
+The older one-backend-per-customer shape remains valid for isolated single-install deployments, but it is not the preferred SaaS path for the Lovable-hosted OneClickPostFactory app.
 
 ## Remaining Work Before Public Launch
 

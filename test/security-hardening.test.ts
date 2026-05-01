@@ -29,6 +29,7 @@ process.env.ENABLE_THREADS = 'false';
 process.env.ENABLE_INSTAGRAM = 'false';
 process.env.ENABLE_LINKEDIN = 'false';
 process.env.ENABLE_FACEBOOK = 'false';
+process.env.BILLING_BYPASS_FOR_LOCAL_DEV = 'true';
 
 const baseUrl = `http://127.0.0.1:${port}`;
 const currentPassword = {
@@ -115,6 +116,10 @@ async function main(): Promise<void> {
   const { startServer, stopServer } = await import('../src/server');
   const storeModule = await import('../src/store');
   const { validateProductionConfig } = await import('../config');
+  const {
+    isLocalDevBillingBypassActive,
+    updateBillingCheckoutState,
+  } = await import('../src/control-plane');
 
   const ownerState = {
     client: createClient(),
@@ -151,6 +156,45 @@ async function main(): Promise<void> {
       assert.equal(bootstrap.response.status, 201);
       assert.equal(bootstrap.data.authenticated, true);
       ownerState.csrf = bootstrap.data.csrfToken;
+    });
+
+    await run('dev runtime identity exposes safe local backend facts', async () => {
+      updateBillingCheckoutState({
+        status: 'canceled',
+        lockedReason: 'Trial expired without an active subscription',
+      });
+
+      const identity = await fetch(`${baseUrl}/api/dev/runtime-identity`, {
+        headers: {
+          Origin: 'http://localhost:5173',
+        },
+      });
+      assert.equal(identity.status, 200);
+      assert.equal(identity.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+      const data = await identity.json() as Record<string, unknown>;
+      assert.equal(data.app, 'social-agent');
+      assert.equal(data.environment, 'development');
+      assert.equal(data.ownerExists, true);
+      assert.equal(data.ownerEmail, 'owner@example.com');
+      assert.equal(data.billingStatus, 'canceled');
+      assert.equal(data.storedAccessActive, false);
+      assert.equal(data.accessActive, true);
+      assert.equal(data.billingBypassForLocalDev, true);
+      assert.equal('password_hash' in data, false);
+      assert.equal('tokens' in data, false);
+      assert.equal('secrets' in data, false);
+    });
+
+    await run('local billing bypass is disabled in production', async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        assert.equal(isLocalDevBillingBypassActive(), false);
+        const identity = await fetch(`${baseUrl}/api/dev/runtime-identity`);
+        assert.equal(identity.status, 404);
+      } finally {
+        process.env.NODE_ENV = previousNodeEnv;
+      }
     });
 
     await run('failed logins are throttled', async () => {
@@ -382,19 +426,87 @@ async function main(): Promise<void> {
         BOOTSTRAP_MODE: 'localhost',
         BOOTSTRAP_TOKEN: '',
         HTTP_TIMEOUT_MS: 15000,
+        BILLING_BYPASS_FOR_LOCAL_DEV: true,
+        SUPABASE_URL: '',
+        SUPABASE_SERVICE_ROLE_KEY: '',
+        CREDENTIAL_ENCRYPTION_KEY: '',
+        SUPABASE_WORKER_POLL_INTERVAL_MS: 10000,
+        SUPABASE_WORKER_BATCH_SIZE: 10,
       });
 
       assert.ok(issues.some(issue => issue.includes('COOKIE_SECURE')));
       assert.ok(issues.some(issue => issue.includes('APP_ENCRYPTION_KEY')));
       assert.ok(issues.some(issue => issue.includes('BOOTSTRAP_MODE')));
       assert.ok(issues.some(issue => issue.includes('APP_DATA_DIR')));
+      assert.ok(issues.some(issue => issue.includes('BILLING_BYPASS_FOR_LOCAL_DEV')));
+    });
+
+    await run('production config validation requires complete Supabase worker credentials', async () => {
+      const issues = validateProductionConfig({
+        NODE_ENV: 'production',
+        APP_DATA_DIR: '/tmp/social-agent-test',
+        REDDIT_USER: 'user',
+        REDDIT_ALLOWED_SUBS: new Set(['test']),
+        REDDIT_SORT: 'new',
+        REDDIT_LIMIT: 50,
+        OPENAI_API_KEY: 'key',
+        OPENAI_MODEL: 'gpt-4o',
+        AI_STYLE: 'conversational',
+        CUSTOM_PROMPT: '',
+        ENABLE_LINKEDIN: false,
+        ENABLE_X: false,
+        META_ACCESS_TOKEN: '',
+        META_GRAPH_VERSION: 'v25.0',
+        THREADS_GRAPH_VERSION: 'v25.0',
+        ENABLE_THREADS: false,
+        ENABLE_INSTAGRAM: false,
+        ENABLE_FACEBOOK: false,
+        LINKEDIN_TOKEN: '',
+        LINKEDIN_PERSON_URN: '',
+        X_API_KEY: '',
+        X_API_SECRET: '',
+        X_ACCESS_TOKEN: '',
+        X_ACCESS_TOKEN_SECRET: '',
+        X_OAUTH2_ACCESS_TOKEN: '',
+        X_OAUTH2_REFRESH_TOKEN: '',
+        X_CLIENT_ID: '',
+        X_CLIENT_SECRET: '',
+        X_REDIRECT_URI: 'http://127.0.0.1:4001/auth/x/callback',
+        THREADS_ACCESS_TOKEN: '',
+        THREADS_USER_ID: '',
+        FACEBOOK_PAGE_ACCESS_TOKEN: '',
+        INSTAGRAM_ACCOUNT_ID: '',
+        FACEBOOK_GROUP_ID: '',
+        FACEBOOK_USER_ID: '',
+        FACEBOOK_PAGE_ID: '',
+        CLOUDINARY_CLOUD_NAME: '',
+        CLOUDINARY_API_KEY: '',
+        CLOUDINARY_API_SECRET: '',
+        CLOUDINARY_UPLOAD_PRESET: '',
+        CLOUDINARY_FOLDER: 'social-agent/instagram',
+        TIMEZONE: 'UTC',
+        GUI_PORT: 4001,
+        TRUST_PROXY: false,
+        BOOTSTRAP_MODE: 'disabled',
+        BOOTSTRAP_TOKEN: '',
+        HTTP_TIMEOUT_MS: 15000,
+        BILLING_BYPASS_FOR_LOCAL_DEV: false,
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_SERVICE_ROLE_KEY: '',
+        CREDENTIAL_ENCRYPTION_KEY: '',
+        SUPABASE_WORKER_POLL_INTERVAL_MS: 10000,
+        SUPABASE_WORKER_BATCH_SIZE: 10,
+      });
+
+      assert.ok(issues.some(issue => issue.includes('SUPABASE_SERVICE_ROLE_KEY')));
+      assert.ok(issues.some(issue => issue.includes('CREDENTIAL_ENCRYPTION_KEY')));
     });
   } finally {
     await stopServer();
     try {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     } catch {
-      // Ignore temp cleanup failures on Windows when SQLite handles are still draining.
+      // Ignore temp cleanup failures while SQLite handles are still draining.
     }
   }
 }

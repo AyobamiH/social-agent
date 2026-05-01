@@ -59,6 +59,12 @@ export interface AppConfig {
   BOOTSTRAP_MODE: 'disabled' | 'token' | 'localhost';
   BOOTSTRAP_TOKEN: string;
   HTTP_TIMEOUT_MS: number;
+  BILLING_BYPASS_FOR_LOCAL_DEV: boolean;
+  SUPABASE_URL: string;
+  SUPABASE_SERVICE_ROLE_KEY: string;
+  CREDENTIAL_ENCRYPTION_KEY: string;
+  SUPABASE_WORKER_POLL_INTERVAL_MS: number;
+  SUPABASE_WORKER_BATCH_SIZE: number;
 }
 
 const envPath = path.join(PROJECT_ROOT, '.env');
@@ -169,6 +175,12 @@ function buildBaseConfig(): AppConfig {
     BOOTSTRAP_MODE: parseBootstrapMode(process.env.BOOTSTRAP_MODE),
     BOOTSTRAP_TOKEN: process.env.BOOTSTRAP_TOKEN || '',
     HTTP_TIMEOUT_MS: Number.parseInt(process.env.HTTP_TIMEOUT_MS || '15000', 10),
+    BILLING_BYPASS_FOR_LOCAL_DEV: parseBooleanEnv(process.env.BILLING_BYPASS_FOR_LOCAL_DEV, false),
+    SUPABASE_URL: process.env.SUPABASE_URL || '',
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || '',
+    CREDENTIAL_ENCRYPTION_KEY: process.env.CREDENTIAL_ENCRYPTION_KEY || '',
+    SUPABASE_WORKER_POLL_INTERVAL_MS: Number.parseInt(process.env.SUPABASE_WORKER_POLL_INTERVAL_MS || '10000', 10),
+    SUPABASE_WORKER_BATCH_SIZE: Number.parseInt(process.env.SUPABASE_WORKER_BATCH_SIZE || '10', 10),
   };
 }
 
@@ -255,6 +267,21 @@ export function validateProductionConfig(current = config): string[] {
     }
     if (current.BOOTSTRAP_MODE === 'token' && !current.BOOTSTRAP_TOKEN.trim()) {
       issues.push('BOOTSTRAP_TOKEN is required when BOOTSTRAP_MODE=token');
+    }
+    if (current.BILLING_BYPASS_FOR_LOCAL_DEV) {
+      issues.push('BILLING_BYPASS_FOR_LOCAL_DEV must be false in production');
+    }
+  }
+
+  if (current.SUPABASE_URL || current.SUPABASE_SERVICE_ROLE_KEY || current.CREDENTIAL_ENCRYPTION_KEY) {
+    if (!current.SUPABASE_URL.trim()) {
+      issues.push('SUPABASE_URL is required when Supabase worker credentials are configured');
+    }
+    if (!current.SUPABASE_SERVICE_ROLE_KEY.trim()) {
+      issues.push('SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY is required when Supabase worker credentials are configured');
+    }
+    if (!current.CREDENTIAL_ENCRYPTION_KEY.trim()) {
+      issues.push('CREDENTIAL_ENCRYPTION_KEY is required when Supabase worker credentials are configured');
     }
   }
 

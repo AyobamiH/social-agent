@@ -24,6 +24,9 @@ Current content flow:
 - `src/cli.ts`: local operations like `fetch`, `queue`, `status`, and `post-now`.
 - `src/server.ts`: dashboard/API server on `GUI_PORT`.
 - `src/automation-service.ts`: shared API/CLI/cron automation service with readiness gates and SQLite locks.
+- `src/supabase-worker.ts`: OneClickPostFactory SaaS worker that polls Supabase `agent_jobs`, processes jobs by `job.user_id`, and writes tenant-scoped results back to Supabase.
+- `src/supabase-client.ts`: small server-side Supabase REST client that requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `CREDENTIAL_ENCRYPTION_KEY` for the worker path.
+- `src/tenant-credentials.ts`: decrypts SaaS `user_credentials.*_enc` values using `CREDENTIAL_ENCRYPTION_KEY`.
 - `src/content-engine.ts`: shared source-bank / angle-bank / queue orchestration.
 - `src/publish.ts`: shared publish orchestrator. This is the main place to change multi-platform posting behavior.
 - `src/runtime-policy.ts`: runtime readiness checks, platform readiness, and automation gating.
@@ -45,16 +48,29 @@ Current content flow:
 
 ## Current Architecture Boundary
 
-This codebase is not tenant-aware SaaS yet.
+This codebase now has two runtime boundaries:
 
-The current backend is a single-install control plane around one automation runtime:
+1. Local single-install runtime:
 
 - `APP_DATA_DIR` points to one global runtime data directory.
 - Queue, history, source memory, angle memory, platform state, runtime settings, runtime secrets, and billing state are global for that installation.
 - Control-plane users are owner/operator/viewer accounts for the same installation, not separate SaaS customer tenants.
 - Billing is represented as one access state for the installation, not per tenant or per workspace.
 
-For Social Pulse SaaS, the backend needs either tenant-scoped data/config/secrets/billing throughout the runtime, or a deliberate deployment model where each customer gets an isolated agent/runtime.
+2. OneClickPostFactory SaaS worker runtime:
+
+- `src/supabase-worker.ts` polls Supabase `agent_jobs` when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY`, and `CREDENTIAL_ENCRYPTION_KEY` are configured.
+- `SUPABASE_URL` must point to the owner-managed OneClickPostFactory Supabase project that Lovable also uses; do not point the worker at a hidden managed project whose secret/service-role key and credential encryption key are unavailable.
+- Every SaaS job is processed by `job.user_id`.
+- SaaS reads/writes for `profiles`, `user_credentials`, `user_sources`, `user_settings`, `queue_items`, `publish_history`, `source_records`, `angle_records`, and `worker_logs` are scoped by `job.user_id`.
+- SaaS credential values are decrypted with `CREDENTIAL_ENCRYPTION_KEY`.
+- SaaS billing entitlement is checked from Supabase `profiles`; the local SQLite billing state and local billing bypass do not grant SaaS worker entitlement.
+- Local SQLite remains acceptable for local admin/dev state, but it is not the SaaS tenant source of truth.
+
+Known SaaS worker limitations:
+
+- Instagram SaaS publishing currently fails clearly with `instagram_image_url_missing` because the SaaS `queue_items` schema does not store an image URL for the worker to publish.
+- LinkedIn SaaS publishing still needs a tenant-scoped person URN field or profile discovery path; the current SaaS credential schema stores the access token only.
 
 ## Important Build Rule
 
@@ -87,7 +103,8 @@ As of April 29, 2026:
 - Source reuse is supported: a Reddit post is only exhausted when no banked angles remain.
 - Draft generation skips disabled platforms to save tokens.
 - Existing queued items can auto-hydrate missing drafts from stored source and angle memory when a platform is enabled later, including X.
-- CLI commands, API routes, and cron publishing all go through `src/automation-service.ts`, which applies the automation gate and uses SQLite locks.
+- CLI commands, local API routes, and local cron publishing all go through `src/automation-service.ts`, which applies the local automation gate and uses SQLite locks.
+- The SaaS worker path goes through `src/supabase-worker.ts`, uses Supabase `agent_jobs`, and does not use local SQLite for tenant queue/history/log/source state.
 
 Current tracked operational mode in `.env.example`:
 
@@ -171,6 +188,7 @@ The npm scripts set `TMPDIR`, `TEMP`, and `TMP` to `/tmp` for `tsx` commands so 
 - `npm run typecheck`: TypeScript validation without emitting JS
 - `npm run ci`: typecheck, build, compiled smoke test, and local security regression suite
 - `npm run dev`: start agent (cron + dashboard) from TypeScript through `tsx`
+- `npm run worker:supabase`: start only the Supabase SaaS worker loop
 - `npm run test-meta`: diagnose Meta setup
 - `npm run test-x`: validate the configured X auth mode and optionally live-post a test update
 - `npm run test`: run the local security hardening regression suite
@@ -212,7 +230,7 @@ The repo includes a prompt pack in `content-os/`:
 - `data/agent.log`: dashboard log feed
 - `backups/`: default backup output directory for `npm run backup`
 
-These files are runtime state, not source code.
+These files are local runtime state, not source code, and not the source of truth for SaaS tenant data.
 
 ## Known Risks
 
@@ -233,6 +251,7 @@ These files are runtime state, not source code.
 5. Run `npm run queue`.
 6. Inspect `data/automation.sqlite`, `data/control-plane.sqlite`, and `data/agent.log`.
 7. Confirm `.env` platform toggles match intended behavior.
+8. For SaaS worker issues, inspect Supabase `agent_jobs` and `worker_logs` for the affected `user_id`.
 
 ## If You Need To Change Publishing Behavior
 

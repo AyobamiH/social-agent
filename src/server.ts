@@ -19,6 +19,8 @@ import {
   disableMfa,
   enableMfa,
   getAuditLogs,
+  getBillingStateSnapshot,
+  getControlPlaneDatabasePath,
   getBillingState,
   getDbHealth,
   getMfaStatus,
@@ -28,6 +30,7 @@ import {
   getSetupStatus,
   issueSessionForUser,
   listUsers,
+  isLocalDevBillingBypassActive,
   login,
   logoutAllSessions,
   recordAudit,
@@ -139,6 +142,23 @@ function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean 
   return /^(1|true|yes|on)$/i.test(value.trim());
 }
 
+function isProductionRuntime(): boolean {
+  return (process.env.NODE_ENV || config.NODE_ENV || 'development').trim().toLowerCase() === 'production';
+}
+
+function isLoopbackOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  try {
+    const parsed = new URL(origin);
+    return parsed.hostname === 'localhost'
+      || parsed.hostname === '127.0.0.1'
+      || parsed.hostname === '[::1]'
+      || parsed.hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
 function applySecurityHeaders(
   res: http.ServerResponse,
   requestId: string,
@@ -212,9 +232,13 @@ function getRequestOrigin(req: http.IncomingMessage): string | undefined {
   return typeof origin === 'string' ? origin : undefined;
 }
 
-function getAllowedOrigin(origin: string | undefined): string | undefined {
+function getAllowedOrigin(origin: string | undefined, pathname: string): string | undefined {
   if (!origin) return undefined;
-  return ALLOWED_ORIGINS.includes(origin) ? origin : undefined;
+  if (ALLOWED_ORIGINS.includes(origin)) return origin;
+  if (!isProductionRuntime() && pathname === '/api/dev/runtime-identity' && isLoopbackOrigin(origin)) {
+    return origin;
+  }
+  return undefined;
 }
 
 function applyCorsHeaders(res: http.ServerResponse, origin?: string): void {
@@ -364,6 +388,33 @@ function getStripeConfigSummary(): Record<string, unknown> {
       yearly: Boolean(STRIPE_PRICE_YEARLY_GBP),
     },
     frontendBaseUrl: FRONTEND_BASE_URL,
+  };
+}
+
+function getDevRuntimeIdentity(): Record<string, unknown> {
+  const users = listUsers();
+  const owner = users.find(user => user.role === 'owner');
+  const billing = getBillingStateSnapshot();
+  const gate = getAutomationGate();
+  const runtimeUrl = process.env.API_BASE_URL
+    || process.env.APP_BASE_URL
+    || `http://localhost:${PORT}`;
+
+  return {
+    app: 'social-agent',
+    environment: process.env.NODE_ENV || config.NODE_ENV || 'development',
+    apiBaseUrl: runtimeUrl,
+    runtimeUrl,
+    databasePath: getControlPlaneDatabasePath(),
+    ownerExists: Boolean(owner),
+    ownerEmail: owner?.email || null,
+    billingStatus: billing.status,
+    trialEndsAt: billing.trialEndsAt || null,
+    storedAccessActive: billing.accessActive,
+    accessActive: gate.billingAccessActive,
+    automationAllowed: gate.allowed,
+    billingBypassForLocalDev: isLocalDevBillingBypassActive(),
+    serverTime: new Date().toISOString(),
   };
 }
 
@@ -587,6 +638,17 @@ const routes: RouteDef[] = [
       }
 
       json(res, { initialized: false }, context.requestId, 200, context.origin);
+    },
+  },
+  {
+    method: 'GET',
+    path: '/api/dev/runtime-identity',
+    handler: (_req, res, context) => {
+      if (isProductionRuntime()) {
+        notFound('Not found', 'NOT_FOUND');
+      }
+
+      json(res, getDevRuntimeIdentity(), context.requestId, 200, context.origin);
     },
   },
   {
@@ -886,7 +948,7 @@ const routes: RouteDef[] = [
       }
 
       const tokens = await x.exchangeOAuth2Code(code, pending.codeVerifier);
-      x.persistOAuth2Tokens(tokens);
+      await x.persistOAuth2Tokens(tokens);
       reloadRuntimeConfigFromStorage();
       store.clearPlatformPublishBlocked('x');
       recordAudit('x.oauth.callback', 'x', { scope: tokens.scope || '' }, context.ip, context.user?.id);
@@ -1266,9 +1328,9 @@ const routes: RouteDef[] = [
 async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const startedAt = Date.now();
   const requestId = crypto.randomUUID();
-  const origin = getAllowedOrigin(getRequestOrigin(req));
   const parsed = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const pathname = parsed.pathname || '/';
+  const origin = getAllowedOrigin(getRequestOrigin(req), pathname);
   const method = req.method || 'GET';
 
   if (method === 'OPTIONS') {
@@ -1428,6 +1490,14 @@ export function startServer(port = PORT): http.Server {
   });
   activeServer.listen(port, () => {
     logger.info(`Dashboard/API running at http://localhost:${port}`);
+    const gate = getAutomationGate();
+    if (gate.localBillingBypassActive) {
+      logger.warn('LOCAL DEV BILLING BYPASS ACTIVE | automation access ignores stored billing state outside production', {
+        nodeEnv: process.env.NODE_ENV || config.NODE_ENV || 'development',
+        storedBillingStatus: gate.billing.status,
+        storedAccessActive: gate.billing.accessActive,
+      });
+    }
   });
   return activeServer;
 }

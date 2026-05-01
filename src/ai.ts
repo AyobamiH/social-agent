@@ -58,6 +58,11 @@ interface PlatformDraft {
   learningNotes: string[];
 }
 
+interface DraftOptions {
+  disableLearningMemory?: boolean;
+  learningNotesByPlatform?: Partial<Record<PlatformKey, string[]>>;
+}
+
 const MIN_SCORE = 4;
 
 const PLATFORM_ORDER: PlatformKey[] = ['linkedin', 'threads', 'x', 'instagram', 'facebook'];
@@ -701,11 +706,14 @@ async function draftForPlatform(
   platform: PlatformKey,
   source: Pick<RedditPost, 'title' | 'selftext'>,
   summary: SourceSummary,
-  angle: AngleCandidate
+  angle: AngleCandidate,
+  options: DraftOptions = {}
 ): Promise<PlatformDraft> {
   const sourceText = [source.title, source.selftext].filter(Boolean).join('\n\n').substring(0, 900);
   const rule = PLATFORM_RULES[platform];
-  const learningNotes = buildLearningNotes(platform, angle);
+  const learningNotes = options.disableLearningMemory
+    ? []
+    : (options.learningNotesByPlatform?.[platform] || buildLearningNotes(platform, angle));
 
   const userPrompt = `Source summary:
 ${formatSourceSummary(summary)}
@@ -847,7 +855,8 @@ export async function draftPlatforms(
   source: Pick<RedditPost, 'title' | 'selftext'>,
   summary: SourceSummary,
   angle: AngleCandidate,
-  platforms: PlatformKey[]
+  platforms: PlatformKey[],
+  options: DraftOptions = {}
 ): Promise<DraftBundle> {
   const activePlatforms = [...new Set(platforms)];
   const transformed: DraftBundle = {
@@ -862,7 +871,7 @@ export async function draftPlatforms(
   };
 
   const draftEntries = await Promise.all(
-    activePlatforms.map(platform => draftForPlatform(platform, source, summary, angle)
+    activePlatforms.map(platform => draftForPlatform(platform, source, summary, angle, options)
       .then(draft => ({ platform, draft })))
   );
 

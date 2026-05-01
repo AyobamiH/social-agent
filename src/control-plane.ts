@@ -100,6 +100,10 @@ export interface PublicBillingState extends BillingState {
   };
 }
 
+interface BillingStateReadOptions {
+  persistNormalization?: boolean;
+}
+
 export interface AuthUser {
   id: number;
   email: string;
@@ -326,6 +330,11 @@ function parseJson<T>(value: string | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function parseBooleanEnv(value: string | undefined): boolean {
+  if (value === undefined || value === '') return false;
+  return /^(1|true|yes|on)$/i.test(value.trim());
 }
 
 function getEncryptionKey(): Buffer {
@@ -570,9 +579,14 @@ function normalizeBillingState(state: BillingState): BillingState {
 }
 
 export function getBillingState(): PublicBillingState {
+  return readBillingState();
+}
+
+function readBillingState(options: BillingStateReadOptions = {}): PublicBillingState {
+  const persistNormalization = options.persistNormalization !== false;
   const stored = parseJson<BillingState>(getSingleton('billing_state'), defaultBillingState());
   const normalized = normalizeBillingState(stored);
-  if (JSON.stringify(normalized) !== JSON.stringify(stored)) {
+  if (persistNormalization && JSON.stringify(normalized) !== JSON.stringify(stored)) {
     upsertBillingState(normalized);
   }
 
@@ -587,7 +601,24 @@ export function getBillingState(): PublicBillingState {
   };
 }
 
+export function getBillingStateSnapshot(): PublicBillingState {
+  return readBillingState({ persistNormalization: false });
+}
+
+export function getControlPlaneDatabasePath(): string {
+  return DB_FILE;
+}
+
+export function isLocalDevBillingBypassActive(): boolean {
+  const nodeEnv = (process.env.NODE_ENV || 'development').trim().toLowerCase();
+  return nodeEnv !== 'production'
+    && parseBooleanEnv(process.env.BILLING_BYPASS_FOR_LOCAL_DEV);
+}
+
 export function canAccessAutomation(): boolean {
+  if (isLocalDevBillingBypassActive()) {
+    return true;
+  }
   return getBillingState().accessActive;
 }
 
