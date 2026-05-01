@@ -910,7 +910,7 @@ export async function processPendingSupabaseJobs(): Promise<WorkerStats> {
 export function startSupabaseWorkerLoop(log = logger): { stop: () => void } | undefined {
   if (!isSupabaseWorkerConfigured()) {
     log.info(
-      'Supabase SaaS worker disabled | SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or CREDENTIAL_ENCRYPTION_KEY is not configured'
+      'Supabase SaaS worker disabled | SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY/SUPABASE_SECRET_KEY, or CREDENTIAL_ENCRYPTION_KEY is not configured'
     );
     return undefined;
   }

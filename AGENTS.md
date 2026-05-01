@@ -25,7 +25,7 @@ Current content flow:
 - `src/server.ts`: dashboard/API server on `GUI_PORT`.
 - `src/automation-service.ts`: shared API/CLI/cron automation service with readiness gates and SQLite locks.
 - `src/supabase-worker.ts`: OneClickPostFactory SaaS worker that polls Supabase `agent_jobs`, processes jobs by `job.user_id`, and writes tenant-scoped results back to Supabase.
-- `src/supabase-client.ts`: small server-side Supabase REST client that requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `CREDENTIAL_ENCRYPTION_KEY` for the worker path.
+- `src/supabase-client.ts`: small server-side Supabase REST client that requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` or alias `SUPABASE_SECRET_KEY`, and `CREDENTIAL_ENCRYPTION_KEY` for the worker path.
 - `src/tenant-credentials.ts`: decrypts SaaS `user_credentials.*_enc` values using `CREDENTIAL_ENCRYPTION_KEY`.
 - `src/content-engine.ts`: shared source-bank / angle-bank / queue orchestration.
 - `src/publish.ts`: shared publish orchestrator. This is the main place to change multi-platform posting behavior.
