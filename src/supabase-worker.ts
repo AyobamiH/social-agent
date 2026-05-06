@@ -77,6 +77,8 @@ interface QueueItemRow {
   platform: PlatformKey;
   status: string;
   draft_text?: string | null;
+  instagram_image_url?: string | null;
+  instagram_image_prompt?: string | null;
   source_url?: string | null;
   source_title?: string | null;
   angle?: string | null;
@@ -241,6 +243,8 @@ function snapshotConfig(): Partial<AppConfig> {
     X_OAUTH2_REFRESH_TOKEN: config.X_OAUTH2_REFRESH_TOKEN,
     META_ACCESS_TOKEN: config.META_ACCESS_TOKEN,
     FACEBOOK_PAGE_ACCESS_TOKEN: config.FACEBOOK_PAGE_ACCESS_TOKEN,
+    INSTAGRAM_ACCOUNT_ID: config.INSTAGRAM_ACCOUNT_ID,
+    FACEBOOK_PAGE_ID: config.FACEBOOK_PAGE_ID,
     TIMEZONE: config.TIMEZONE,
   };
 }
@@ -272,12 +276,15 @@ async function withTenantRuntime<T>(tenant: TenantContext, fn: () => Promise<T>)
   config.ENABLE_FACEBOOK = tenant.activePlatforms.includes('facebook');
   config.THREADS_ACCESS_TOKEN = tenant.credentials.threadsToken || '';
   config.LINKEDIN_TOKEN = tenant.credentials.linkedinToken || '';
+  config.LINKEDIN_PERSON_URN = tenant.credentials.linkedinPersonUrn || '';
   config.X_CLIENT_ID = tenant.credentials.xClientId || '';
   config.X_CLIENT_SECRET = tenant.credentials.xClientSecret || '';
   config.X_OAUTH2_ACCESS_TOKEN = tenant.credentials.xOAuth2AccessToken || '';
   config.X_OAUTH2_REFRESH_TOKEN = tenant.credentials.xOAuth2RefreshToken || '';
   config.META_ACCESS_TOKEN = tenant.credentials.metaAccessToken || tenant.credentials.instagramToken || '';
-  config.FACEBOOK_PAGE_ACCESS_TOKEN = tenant.credentials.instagramToken || '';
+  config.FACEBOOK_PAGE_ACCESS_TOKEN = tenant.credentials.facebookPageAccessToken || tenant.credentials.instagramToken || '';
+  config.INSTAGRAM_ACCOUNT_ID = tenant.credentials.instagramAccountId || '';
+  config.FACEBOOK_PAGE_ID = tenant.credentials.facebookPageId || '';
   config.TIMEZONE = tenant.settings.posting_timezone || previous.TIMEZONE || 'Europe/London';
 
   try {
@@ -535,6 +542,8 @@ function toQueueRows(
       platform,
       status: 'ready',
       draft_text: getPlatformDraftText(draft, platform),
+      instagram_image_url: platform === 'instagram' ? draft.imageUrl || null : null,
+      instagram_image_prompt: platform === 'instagram' ? draft.imagePrompt || null : null,
       source_url: sourceUrl,
       source_title: post.title,
       angle: angle.thesis,
@@ -679,7 +688,10 @@ async function publishPlatform(row: QueueItemRow): Promise<string> {
     case 'linkedin':
       return linkedin.publish(text);
     case 'instagram':
-      throw new WorkerJobError('instagram_image_url_missing', 'instagram_image_url_missing');
+      if (!row.instagram_image_url?.trim()) {
+        throw new WorkerJobError('instagram_image_url_missing', 'instagram_image_url_missing');
+      }
+      return instagram.publish(text, row.instagram_image_url);
     case 'facebook':
       throw new WorkerJobError('facebook_paused', 'facebook_paused');
   }
@@ -910,7 +922,7 @@ export async function processPendingSupabaseJobs(): Promise<WorkerStats> {
 export function startSupabaseWorkerLoop(log = logger): { stop: () => void } | undefined {
   if (!isSupabaseWorkerConfigured()) {
     log.info(
-      'Supabase SaaS worker disabled | SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY/SUPABASE_SECRET_KEY, or CREDENTIAL_ENCRYPTION_KEY is not configured'
+      'Supabase SaaS worker disabled | SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY/SUPABASE_SECRET_KEY/SERVICE_ROLE_KEY, or CREDENTIAL_ENCRYPTION_KEY is not configured'
     );
     return undefined;
   }

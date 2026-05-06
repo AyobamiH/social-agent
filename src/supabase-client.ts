@@ -30,6 +30,18 @@ export class SupabaseRestError extends Error {
   }
 }
 
+export class SupabaseNetworkError extends Error {
+  constructor(
+    message: string,
+    public readonly table: string,
+    public readonly operation: string,
+    public readonly endpoint: string,
+    public readonly causeDetails?: string
+  ) {
+    super(message);
+  }
+}
+
 export function isSupabaseWorkerConfigured(): boolean {
   return Boolean(config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY && config.CREDENTIAL_ENCRYPTION_KEY);
 }
@@ -39,7 +51,7 @@ export function assertSupabaseWorkerConfigured(): void {
     throw new Error('SUPABASE_URL is not configured');
   }
   if (!config.SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error('SUPABASE_SERVICE_ROLE_KEY is not configured');
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY, SUPABASE_SECRET_KEY, or SERVICE_ROLE_KEY is not configured');
   }
   if (!config.CREDENTIAL_ENCRYPTION_KEY) {
     throw new Error('CREDENTIAL_ENCRYPTION_KEY is not configured');
@@ -49,6 +61,41 @@ export function assertSupabaseWorkerConfigured(): void {
 function baseUrl(): string {
   assertSupabaseWorkerConfigured();
   return `${config.SUPABASE_URL.replace(/\/+$/, '')}/rest/v1`;
+}
+
+function endpointForLog(url: string | URL): string {
+  const parsed = typeof url === 'string' ? new URL(url) : url;
+  return `${parsed.origin}${parsed.pathname}`;
+}
+
+function describeCause(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const code = typeof (cause as { code?: unknown }).code === 'string'
+      ? ` ${String((cause as { code?: unknown }).code)}`
+      : '';
+    return `${cause.name}${code}: ${cause.message}`;
+  }
+  if (cause) return String(cause);
+  return undefined;
+}
+
+async function fetchSupabase(url: string | URL, init: RequestInit, table: string, operation: string): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    const endpoint = endpointForLog(url);
+    const causeDetails = describeCause(error);
+    const suffix = causeDetails ? ` | cause: ${causeDetails}` : '';
+    throw new SupabaseNetworkError(
+      `Supabase ${operation} ${table} network request failed at ${endpoint}${suffix}`,
+      table,
+      operation,
+      endpoint,
+      causeDetails
+    );
+  }
 }
 
 function encodeFilterValue(value: SupabaseFilterValue | SupabaseFilterValue[]): string {
@@ -100,10 +147,10 @@ export async function supabaseSelect<T>(
   if (typeof options.limit === 'number') url.searchParams.set('limit', String(options.limit));
   addFilters(url, options.filters);
 
-  const response = await fetch(url, {
+  const response = await fetchSupabase(url, {
     headers: serviceHeaders(),
     signal: AbortSignal.timeout(config.HTTP_TIMEOUT_MS),
-  });
+  }, table, 'select');
   return parseResponse<T[]>(response, table);
 }
 
@@ -112,7 +159,8 @@ export async function supabaseInsert<T>(
   body: Record<string, unknown> | Array<Record<string, unknown>>,
   returning = false
 ): Promise<T[]> {
-  const response = await fetch(`${baseUrl()}/${table}`, {
+  const url = `${baseUrl()}/${table}`;
+  const response = await fetchSupabase(url, {
     method: 'POST',
     headers: serviceHeaders({
       'Content-Type': 'application/json',
@@ -120,7 +168,7 @@ export async function supabaseInsert<T>(
     }),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(config.HTTP_TIMEOUT_MS),
-  });
+  }, table, 'insert');
   return parseResponse<T[]>(response, table);
 }
 
@@ -131,7 +179,7 @@ export async function supabaseUpdate<T>(
 ): Promise<T[]> {
   const url = new URL(`${baseUrl()}/${table}`);
   addFilters(url, options.filters);
-  const response = await fetch(url, {
+  const response = await fetchSupabase(url, {
     method: 'PATCH',
     headers: serviceHeaders({
       'Content-Type': 'application/json',
@@ -139,7 +187,7 @@ export async function supabaseUpdate<T>(
     }),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(config.HTTP_TIMEOUT_MS),
-  });
+  }, table, 'update');
   return parseResponse<T[]>(response, table);
 }
 
@@ -149,12 +197,12 @@ export async function supabaseDelete<T>(
 ): Promise<T[]> {
   const url = new URL(`${baseUrl()}/${table}`);
   addFilters(url, options.filters);
-  const response = await fetch(url, {
+  const response = await fetchSupabase(url, {
     method: 'DELETE',
     headers: serviceHeaders({
       Prefer: options.returning ? 'return=representation' : 'return=minimal',
     }),
     signal: AbortSignal.timeout(config.HTTP_TIMEOUT_MS),
-  });
+  }, table, 'delete');
   return parseResponse<T[]>(response, table);
 }

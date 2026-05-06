@@ -25,7 +25,7 @@ Current content flow:
 - `src/server.ts`: dashboard/API server on `GUI_PORT`.
 - `src/automation-service.ts`: shared API/CLI/cron automation service with readiness gates and SQLite locks.
 - `src/supabase-worker.ts`: OneClickPostFactory SaaS worker that polls Supabase `agent_jobs`, processes jobs by `job.user_id`, and writes tenant-scoped results back to Supabase.
-- `src/supabase-client.ts`: small server-side Supabase REST client that requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` or alias `SUPABASE_SECRET_KEY`, and `CREDENTIAL_ENCRYPTION_KEY` for the worker path.
+- `src/supabase-client.ts`: small server-side Supabase REST client that requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` or aliases `SUPABASE_SECRET_KEY`/`SERVICE_ROLE_KEY`, and `CREDENTIAL_ENCRYPTION_KEY` for the worker path.
 - `src/tenant-credentials.ts`: decrypts SaaS `user_credentials.*_enc` values using `CREDENTIAL_ENCRYPTION_KEY`.
 - `src/content-engine.ts`: shared source-bank / angle-bank / queue orchestration.
 - `src/publish.ts`: shared publish orchestrator. This is the main place to change multi-platform posting behavior.
@@ -59,7 +59,7 @@ This codebase now has two runtime boundaries:
 
 2. OneClickPostFactory SaaS worker runtime:
 
-- `src/supabase-worker.ts` polls Supabase `agent_jobs` when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY`, and `CREDENTIAL_ENCRYPTION_KEY` are configured.
+- `src/supabase-worker.ts` polls Supabase `agent_jobs` when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` or aliases `SUPABASE_SECRET_KEY`/`SERVICE_ROLE_KEY`, and `CREDENTIAL_ENCRYPTION_KEY` are configured.
 - `SUPABASE_URL` must point to the owner-managed OneClickPostFactory Supabase project that Lovable also uses; do not point the worker at a hidden managed project whose secret/service-role key and credential encryption key are unavailable.
 - Every SaaS job is processed by `job.user_id`.
 - SaaS reads/writes for `profiles`, `user_credentials`, `user_sources`, `user_settings`, `queue_items`, `publish_history`, `source_records`, `angle_records`, and `worker_logs` are scoped by `job.user_id`.
@@ -69,8 +69,7 @@ This codebase now has two runtime boundaries:
 
 Known SaaS worker limitations:
 
-- Instagram SaaS publishing currently fails clearly with `instagram_image_url_missing` because the SaaS `queue_items` schema does not store an image URL for the worker to publish.
-- LinkedIn SaaS publishing still needs a tenant-scoped person URN field or profile discovery path; the current SaaS credential schema stores the access token only.
+- Facebook Group publishing remains paused until the app/token/group permission path is verified.
 
 ## Important Build Rule
 
@@ -182,7 +181,7 @@ In this workspace, run Node/npm commands inside the Linux shell and load NVM fir
 
 `source ~/.nvm/nvm.sh && npm run build`
 
-The npm scripts set `TMPDIR`, `TEMP`, and `TMP` to `/tmp` for `tsx` commands so local builds use Linux socket paths.
+`package.json` is strict JSON, so script commentary belongs here and in the README command table rather than as inline comments inside the scripts object.
 
 - `npm run build`: compile TypeScript to `dist/`
 - `npm run typecheck`: TypeScript validation without emitting JS

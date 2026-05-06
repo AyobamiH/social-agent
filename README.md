@@ -48,10 +48,12 @@ pm2 save && pm2 startup
 - Author in TypeScript.
 - Use `npm run dev` for source-driven local development through `tsx`.
 - Use `npm run build` to compile the runtime into `dist/`.
-- Use `npm start` or `npm run start:pm2` to run the compiled `dist/` service.
+- Use `npm start` or `npm run start:pm2` to run the compiled `dist/` service in production.
 - Do not edit generated build output by hand.
 - Runtime state now lives primarily in `data/automation.sqlite` and `data/control-plane.sqlite`.
 - The build copies `public/` and `content-os/` into `dist/` so the compiled runtime stays self-contained.
+
+Production intentionally runs compiled JavaScript from `dist/`, not TypeScript through `tsx`. TypeScript is the authoring format; JavaScript is the Node runtime artifact. This keeps production startup smaller, removes the TypeScript transpiler from the live service path, and proves the exact deployable artifact with `npm run smoke:dist` and `npm run ci`.
 
 ## OneClickPostFactory SaaS worker mode
 
@@ -171,27 +173,31 @@ Find the Facebook Group ID from `facebook.com/groups/GROUP_ID`.
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `npm run typecheck` | Validate TypeScript without emitting |
-| `npm run build` | Compile runtime output into `dist/` |
-| `npm run dev` | Start the scheduler and dashboard from TypeScript through `tsx` |
-| `npm start` | Start the compiled scheduler and dashboard from `dist/` |
-| `npm run smoke:dist` | Smoke-test the compiled CLI/runtime wiring |
-| `npm run fetch` | Fill empty queue slots from banked angles or fresh Reddit sources |
-| `npm run queue` | Preview queued drafts for every enabled platform |
-| `npm run status` | Show slot occupancy and memory counts |
-| `npm run memory` | Show source and angle inventory |
-| `npm run history` | Show recent publish history |
-| `npm run post-now` | Publish queued slots immediately |
-| `npm run test-meta` | Diagnose Meta credentials and linked assets |
-| `npm run test-x` | Validate X auth and optionally live-post a test update |
-| `npm run import-x-oauth2` | Import X OAuth 2.0 user-context tokens generated in the X developer portal |
-| `npm run worker:supabase` | Poll the owner-managed Supabase `agent_jobs` table and process SaaS tenant work |
-| `npm run test` | Run the local security hardening regression suite |
-| `npm run backup` | Snapshot `APP_DATA_DIR` into `backups/` |
-| `npm run restore -- --from <backup-dir>` | Restore a backup into `APP_DATA_DIR` |
-| `npm run deploy -- --ref origin/main` | Backup data, rebuild `dist/`, restart PM2 on `dist/src/agent.js`, and health-check |
+`package.json` is strict JSON, so the scripts themselves cannot have real comments. This table is the script commentary and should be updated whenever a script is added or renamed.
+
+| Command | Why it exists | What it runs |
+|---|---|---|
+| `npm run typecheck` | Catch TypeScript contract errors before a build or deploy. | `tsc --noEmit --project tsconfig.json` |
+| `npm run build` | Produce the deployable runtime artifact under `dist/`. | `tsx scripts/build.ts` |
+| `npm run test` | Run the focused local security regression suite against compiled output. | `npm run build && node dist/test/security-hardening.test.js` |
+| `npm run smoke:dist` | Prove the compiled CLI can boot and read runtime state. | `node dist/src/cli.js status` |
+| `npm run ci` | Run the full local release gate in one command. | typecheck, build, dist smoke, security tests |
+| `npm run dev` | Start the scheduler and dashboard directly from TypeScript during local development. | `tsx src/agent.ts` |
+| `npm run worker:supabase` | Run only the hosted SaaS worker loop against Supabase jobs. | `tsx src/supabase-worker.ts` |
+| `npm start` | Start the production service from compiled JavaScript. | `node dist/src/agent.js` |
+| `npm run start:pm2` | Start the compiled production service under PM2 supervision. | `pm2 start dist/src/agent.js --name social-agent --restart-delay=5000` |
+| `npm run deploy -- --ref origin/main` | Backup data, rebuild, restart PM2, and health-check a deployment. | `tsx scripts/deploy.ts` |
+| `npm run backup` | Snapshot runtime state before deploys or risky operations. | `tsx scripts/backup.ts` |
+| `npm run restore -- --from <backup-dir>` | Restore runtime state from a previous backup. | `tsx scripts/restore.ts` |
+| `npm run fetch` | Fill empty queue slots from banked angles or fresh Reddit sources. | `tsx src/cli.ts fetch` |
+| `npm run queue` | Inspect queued drafts, publish IDs, and retry errors. | `tsx src/cli.ts queue` |
+| `npm run status` | Check slot occupancy and memory counts quickly. | `tsx src/cli.ts status` |
+| `npm run memory` | Inspect source and angle inventory. | `tsx src/cli.ts memory` |
+| `npm run history` | Review recent publish history. | `tsx src/cli.ts history` |
+| `npm run post-now` | Publish queued slots immediately through the same automation gate as cron/API. | `tsx src/cli.ts post-now` |
+| `npm run import-x-oauth2` | Import X OAuth 2.0 user-context tokens generated in the X developer portal. | `tsx src/cli.ts import-x-oauth2` |
+| `npm run test-meta` | Diagnose Meta credentials, Pages, Instagram linkage, Threads, and Group access. | `tsx src/test-meta.ts` |
+| `npm run test-x` | Validate the configured X auth mode and optionally live-post a smoke test. | `tsx src/test-x.ts` |
 
 ## Operational notes
 

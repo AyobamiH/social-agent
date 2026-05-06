@@ -10,7 +10,11 @@ export interface TenantCredentials {
   openaiApiKey?: string;
   threadsToken?: string;
   instagramToken?: string;
+  instagramAccountId?: string;
+  facebookPageId?: string;
+  facebookPageAccessToken?: string;
   linkedinToken?: string;
+  linkedinPersonUrn?: string;
   metaAccessToken?: string;
   redditClientId?: string;
   redditClientSecret?: string;
@@ -24,8 +28,12 @@ export interface TenantCredentialRow {
   openai_api_key_enc?: string | null;
   threads_token_enc?: string | null;
   instagram_token_enc?: string | null;
+  instagram_account_id_enc?: string | null;
   facebook_token_enc?: string | null;
+  facebook_page_id_enc?: string | null;
+  facebook_page_access_token_enc?: string | null;
   linkedin_token_enc?: string | null;
+  linkedin_person_urn_enc?: string | null;
   meta_access_token_enc?: string | null;
   reddit_client_id_enc?: string | null;
   reddit_client_secret_enc?: string | null;
@@ -103,7 +111,11 @@ export function decryptTenantCredentials(row: TenantCredentialRow | null | undef
       openaiApiKey: compact(decryptCredential(row.openai_api_key_enc)),
       threadsToken: compact(decryptCredential(row.threads_token_enc)),
       instagramToken: compact(decryptCredential(row.instagram_token_enc)),
+      instagramAccountId: compact(decryptCredential(row.instagram_account_id_enc)),
+      facebookPageId: compact(decryptCredential(row.facebook_page_id_enc)),
+      facebookPageAccessToken: compact(decryptCredential(row.facebook_page_access_token_enc)),
       linkedinToken: compact(decryptCredential(row.linkedin_token_enc)),
+      linkedinPersonUrn: compact(decryptCredential(row.linkedin_person_urn_enc)),
       metaAccessToken: compact(decryptCredential(row.meta_access_token_enc)),
       redditClientId: compact(decryptCredential(row.reddit_client_id_enc)),
       redditClientSecret: compact(decryptCredential(row.reddit_client_secret_enc)),
